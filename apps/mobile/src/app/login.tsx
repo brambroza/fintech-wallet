@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { View } from "react-native";
 import { router } from "expo-router";
+import { goHome } from "@/lib/nav";
 import { PinPad } from "@/components/PinPad";
 import { Button, Field, Header, Screen, T } from "@/components/ui";
 import { api, errorText } from "@/lib/api";
@@ -35,8 +36,8 @@ export default function Login() {
       }
       await session.saveTokens(r);
       const me = await loadMe();
-      if (me) await session.saveProfile(me.phone, me.displayName);
-      router.replace(me && (me.kyc.status === "none" || me.kyc.status === "rejected") ? "/kyc" : "/home");
+      if (me) await session.saveProfile(me.phone ?? p, me.displayName);
+      goHome();
     } catch (e) {
       setError(errorText(e));
       setReset((n) => n + 1);
@@ -68,9 +69,9 @@ export default function Login() {
         <>
           <Button title="ถัดไป" disabled={!valid} onPress={() => setStep("pin")} />
           <T v="body" style={{ textAlign: "center", color: color.muted }}>
-            ยังไม่มีบัญชี?{" "}
-            <T v="bodyStrong" style={{ color: color.accent }} onPress={() => router.replace("/register")} accessibilityRole="link">
-              สมัครใช้งาน
+            ใช้ครั้งแรก?{" "}
+            <T v="bodyStrong" style={{ color: color.accent }} onPress={() => router.replace("/activate")} accessibilityRole="link">
+              เปิดใช้งานบัญชี
             </T>
           </T>
         </>

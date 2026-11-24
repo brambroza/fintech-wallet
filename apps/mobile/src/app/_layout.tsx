@@ -16,7 +16,7 @@ import { color } from "@/theme";
 
 /** Re-lock the app with PIN after this long in the background. */
 const LOCK_AFTER_MS = 60_000;
-const PUBLIC = ["/", "/welcome", "/login", "/login-otp", "/unlock", "/register", "/register/otp", "/register/pin"];
+const PUBLIC = ["/", "/welcome", "/login", "/login-otp", "/unlock", "/activate", "/activate/otp", "/activate/pin"];
 
 export default function RootLayout() {
   const [loaded] = useFonts({ IBMPlexSansThai_400Regular, IBMPlexSansThai_500Medium, IBMPlexSansThai_600SemiBold, IBMPlexSansThai_700Bold });
@@ -45,8 +45,8 @@ export default function RootLayout() {
           <Stack.Screen name="index" options={{ animation: "none" }} />
           <Stack.Screen name="(tabs)" options={{ animation: "fade", gestureEnabled: false }} />
           <Stack.Screen name="unlock" options={{ animation: "fade", gestureEnabled: false }} />
-          <Stack.Screen name="send/result" options={{ gestureEnabled: false }} />
-          <Stack.Screen name="send/confirm" options={{ presentation: "modal" }} />
+          <Stack.Screen name="pay/result" options={{ gestureEnabled: false }} />
+          <Stack.Screen name="scan" options={{ presentation: "fullScreenModal" }} />
         </Stack>
       </StoreProvider>
     </SafeAreaProvider>

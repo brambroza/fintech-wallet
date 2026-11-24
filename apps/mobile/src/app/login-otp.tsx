@@ -1,4 +1,5 @@
 import { router } from "expo-router";
+import { goHome } from "@/lib/nav";
 import { OtpScreen } from "@/components/OtpScreen";
 import { errorText } from "@/lib/api";
 import { api } from "@/lib/api";
@@ -21,9 +22,9 @@ export default function LoginOtp() {
         try {
           await session.saveTokens(await api.loginVerify(login.otpId, code));
           const me = await loadMe();
-          if (me) await session.saveProfile(me.phone, me.displayName);
+          if (me) await session.saveProfile(me.phone ?? login.phone, me.displayName);
           setLogin(null);
-          router.replace(me && (me.kyc.status === "none" || me.kyc.status === "rejected") ? "/kyc" : "/home");
+          goHome();
           return null;
         } catch (e) {
           return errorText(e);

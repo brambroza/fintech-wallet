@@ -1,22 +1,21 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from "react";
-import { api, type Me, type Quote, type Target, type Txn } from "./api";
+import { api, type Me, type PayTarget, type Txn } from "./api";
 
-/** Multi-screen drafts (register + send) and the cached profile. */
-type RegisterDraft = { phone: string; displayName: string; otpId?: string; code?: string };
-type SendDraft = { target?: Target; recipientName?: string; amount?: number; note?: string; quote?: Quote; idempotencyKey?: string; result?: Txn; errorText?: string };
+/** Multi-screen drafts (activation, login OTP, payment) and the cached profile. */
+type ActivateDraft = { phone: string; otpId?: string; code?: string };
 type LoginDraft = { phone: string; otpId: string; maskedPhone: string; devCode?: string };
+type PayDraft = { target?: PayTarget; amount?: number; idempotencyKey?: string; result?: Txn; errorText?: string };
 
 type Store = {
   me: Me | null;
   loadMe: () => Promise<Me | null>;
   setMe: (m: Me | null) => void;
-  register: RegisterDraft;
-  setRegister: (p: Partial<RegisterDraft>) => void;
+  activate: ActivateDraft;
+  setActivate: (p: Partial<ActivateDraft>) => void;
   login: LoginDraft | null;
   setLogin: (l: LoginDraft | null) => void;
-  send: SendDraft;
-  setSend: (p: Partial<SendDraft> | null) => void;
-  kycImages: { idCard?: string };
+  pay: PayDraft;
+  setPay: (p: Partial<PayDraft> | null) => void;
   devOtp: { current?: string };
 };
 
@@ -24,11 +23,9 @@ const Ctx = createContext<Store | null>(null);
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [me, setMe] = useState<Me | null>(null);
-  const [register, setReg] = useState<RegisterDraft>({ phone: "", displayName: "" });
+  const [activate, setAct] = useState<ActivateDraft>({ phone: "" });
   const [login, setLogin] = useState<LoginDraft | null>(null);
-  const [send, setSendState] = useState<SendDraft>({});
-  // Images are large; keep them out of React state.
-  const kycImages = useRef<{ idCard?: string }>({}).current;
+  const [pay, setPayState] = useState<PayDraft>({});
   const devOtp = useRef<{ current?: string }>({}).current;
 
   const loadMe = useCallback(async () => {
@@ -46,16 +43,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
       me,
       loadMe,
       setMe,
-      register,
-      setRegister: (p) => setReg((r) => ({ ...r, ...p })),
+      activate,
+      setActivate: (p) => setAct((a) => ({ ...a, ...p })),
       login,
       setLogin,
-      send,
-      setSend: (p) => setSendState((s) => (p === null ? {} : { ...s, ...p })),
-      kycImages,
+      pay,
+      setPay: (p) => setPayState((s) => (p === null ? {} : { ...s, ...p })),
       devOtp,
     }),
-    [me, loadMe, register, login, send, kycImages, devOtp],
+    [me, loadMe, activate, login, pay, devOtp],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

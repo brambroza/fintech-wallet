@@ -11,6 +11,7 @@ const shapes = {
   back: [<Path key="a" d="M15 6l-6 6 6 6" />],
   bell: [<Path key="a" d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z" />, <Path key="b" d="M10 20a2 2 0 0 0 4 0" />],
   check: [<Path key="a" d="M5 12l5 5 9-10" />],
+  qr: [<Path key="a" d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4" />, <Path key="b" d="M4 12h16" />],
   x: [<Path key="a" d="M6 6l12 12M18 6L6 18" />],
   clock: [<Circle key="a" cx="12" cy="12" r="9" />, <Path key="b" d="M12 7v5l3 2" />],
   chev: [<Path key="a" d="M9 6l6 6-6 6" />],

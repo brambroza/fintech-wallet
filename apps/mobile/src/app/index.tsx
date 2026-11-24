@@ -10,7 +10,7 @@ import { color } from "@/theme";
 export default function Splash() {
   useEffect(() => {
     (async () => {
-      const rt = await session.getRefresh();
+      const rt = await session.getRefresh().catch(() => null);
       router.replace(rt ? "/unlock" : "/welcome");
     })();
   }, []);
@@ -21,10 +21,10 @@ export default function Splash() {
         <Icon name="wallet" size={48} color={color.accent} strokeWidth={2} />
       </View>
       <T v="title" style={{ color: "#FFFFFF", fontSize: 30 }}>
-        Wallet
+        Canteen Wallet
       </T>
       <T v="body" style={{ color: "#FFFFFF", opacity: 0.9 }}>
-        โอน จ่าย ออม ในแอปเดียว
+        สแกนจ่ายในโรงอาหาร
       </T>
     </View>
   );

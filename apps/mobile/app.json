@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "Wallet",
-    "slug": "fintech-wallet",
+    "name": "Canteen Wallet",
+    "slug": "canteen-wallet",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -21,7 +21,7 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "scheme": "fintechwallet",
+    "scheme": "canteenwallet",
     "plugins": [
       "expo-router",
       [
@@ -36,14 +36,15 @@
           "faceIDPermission": "ใช้ Face ID เพื่อปลดล็อกแอปและยืนยันการโอน"
         }
       ],
+      "expo-font",
       [
-        "expo-image-picker",
+        "expo-camera",
         {
-          "cameraPermission": "ใช้กล้องเพื่อถ่ายรูปบัตรประชาชนและใบหน้าสำหรับยืนยันตัวตน",
-          "photosPermission": false
+          "cameraPermission": "ใช้กล้องเพื่อสแกน QR จ่ายเงินที่ร้านในโรงอาหาร",
+          "microphonePermission": false,
+          "recordAudioAndroid": false
         }
-      ],
-      "expo-font"
+      ]
     ],
     "experiments": {
       "typedRoutes": false

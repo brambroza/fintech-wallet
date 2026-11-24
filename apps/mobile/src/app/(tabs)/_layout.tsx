@@ -6,9 +6,7 @@ import { color, font } from "@/theme";
 
 const TABS: { name: string; label: string; icon: IconName }[] = [
   { name: "home", label: "หน้าหลัก", icon: "home" },
-  { name: "pay", label: "จ่าย", icon: "pay" },
   { name: "activity", label: "รายการ", icon: "list" },
-  { name: "save", label: "ออม", icon: "target" },
   { name: "profile", label: "โปรไฟล์", icon: "user" },
 ];
 

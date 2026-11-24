@@ -8,7 +8,7 @@ export default function Welcome() {
     <Screen
       footer={
         <>
-          <Button title="สมัครใช้งาน" onPress={() => router.push("/register")} />
+          <Button title="ใช้ครั้งแรก เปิดใช้งานบัญชี" onPress={() => router.push("/activate")} />
           <Button title="มีบัญชีแล้ว เข้าสู่ระบบ" kind="secondary" onPress={() => router.push("/login")} />
         </>
       }
@@ -37,10 +37,10 @@ export default function Welcome() {
         </View>
         <View style={{ gap: 10 }}>
           <T v="title" style={{ fontSize: 28, lineHeight: 38 }} accessibilityRole="header">
-            จัดการเงินง่าย{"\n"}ในแอปเดียว
+            โรงอาหาร{"\n"}ไม่ต้องใช้เงินสด
           </T>
           <T v="body" style={{ color: color.muted }}>
-            โอนเงิน ตั้งเป้าออม และดูรายการได้ทันที ปลอดภัยด้วย PIN และ Face ID
+            สแกนจ่ายในโรงอาหาร ใช้สวัสดิการค่าอาหาร ดูยอดได้ทันที ปลอดภัยด้วย PIN
           </T>
         </View>
       </View>

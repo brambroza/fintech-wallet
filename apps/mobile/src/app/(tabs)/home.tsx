@@ -1,50 +1,26 @@
 import { useCallback, useState } from "react";
 import { Pressable, RefreshControl, ScrollView, View } from "react-native";
 import { router, useFocusEffect } from "expo-router";
-import { Icon, type IconName } from "@/components/Icon";
-import { KycBanner } from "@/components/KycBanner";
-import { TxRow } from "@/components/TxRow";
-import { Avatar, Card, Divider, IconBox, T } from "@/components/ui";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Icon } from "@/components/Icon";
+import { TxRow } from "@/components/TxRow";
+import { Avatar, Card, Divider, Notice, T } from "@/components/ui";
 import { api, type Txn } from "@/lib/api";
 import { baht, initials } from "@/lib/format";
 import { useStore } from "@/lib/store";
 import { color, font, radius } from "@/theme";
 
-function greeting() {
-  const h = new Date().getHours();
-  return h < 12 ? "สวัสดีตอนเช้า" : h < 17 ? "สวัสดีตอนบ่าย" : "สวัสดีตอนเย็น";
-}
-
-function Action({ icon, label, onPress, disabled }: { icon: IconName; label: string; onPress: () => void; disabled?: boolean }) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityState={{ disabled: !!disabled }}
-      onPress={disabled ? undefined : onPress}
-      style={{ flex: 1, alignItems: "center", gap: 8, opacity: disabled ? 0.45 : 1 }}
-    >
-      <IconBox name={icon} size={52} />
-      <T v="label" style={{ fontSize: 13 }}>
-        {label}
-      </T>
-    </Pressable>
-  );
-}
-
 export default function Home() {
-  const { me, loadMe } = useStore();
+  const { me, loadMe, setPay } = useStore();
   const [recent, setRecent] = useState<Txn[]>([]);
-  const [hidden, setHidden] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   const load = useCallback(async () => {
     await loadMe();
-    try {
-      setRecent((await api.transactions({ limit: 3 })).items);
-    } catch {
-      setRecent([]);
-    }
+    api
+      .transactions()
+      .then((r) => setRecent(r.items.slice(0, 3)))
+      .catch(() => setRecent([]));
   }, [loadMe]);
 
   useFocusEffect(
@@ -53,12 +29,13 @@ export default function Home() {
     }, [load]),
   );
 
-  const canMove = me?.kyc.status === "approved";
+  const w = me?.wallet;
+  const usedPct = w ? Math.min(100, (w.spentToday / w.dailyLimit) * 100) : 0;
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={["top"]}>
       <ScrollView
-        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24, gap: 18 }}
+        contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24, gap: 16 }}
         refreshControl={
           <RefreshControl
             refreshing={refreshing}
@@ -73,36 +50,70 @@ export default function Home() {
         <View style={{ flexDirection: "row", alignItems: "center", gap: 12, paddingTop: 12 }}>
           <Avatar text={initials(me?.displayName ?? "")} />
           <View style={{ flex: 1 }}>
-            <T v="caption">{greeting()}</T>
             <T v="h2">{me?.displayName ?? " "}</T>
+            <T v="caption">{w?.orgName ?? " "}</T>
           </View>
         </View>
 
-        <KycBanner me={me} />
+        {me && !w ? <Notice tone="bad">บัญชีนี้ยังไม่ได้เป็นพนักงานในระบบโรงอาหาร ติดต่อฝ่ายบุคคล</Notice> : null}
 
         <View style={{ backgroundColor: color.accent, borderRadius: radius.xl, padding: 20, gap: 4 }}>
-          <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
-            <T v="body" style={{ color: "#FFFFFF", fontSize: 14, opacity: 0.9 }}>
-              ยอดเงินคงเหลือ
-            </T>
-            <Pressable accessibilityRole="button" accessibilityLabel={hidden ? "แสดงยอดเงิน" : "ซ่อนยอดเงิน"} onPress={() => setHidden(!hidden)} hitSlop={12}>
-              <Icon name={hidden ? "eyeOff" : "eye"} size={18} color="#FFFFFF" />
-            </Pressable>
-          </View>
+          <T v="body" style={{ color: "#FFFFFF", fontSize: 14, opacity: 0.9 }}>
+            ใช้ได้
+          </T>
           <T v="display" style={{ color: "#FFFFFF", fontFamily: font.bold }}>
-            {me ? (hidden ? "฿ ••••••" : baht(me.balance)) : " "}
+            {w ? baht(w.available) : " "}
           </T>
           <T v="body" style={{ color: "#FFFFFF", fontSize: 14, opacity: 0.9 }}>
-            {me ? `Wallet · ${me.phone.slice(-4).padStart(8, "•")}` : " "}
+            {!w
+              ? " "
+              : w.mode === "prepaid"
+                ? "ยอดเงินคงเหลือ"
+                : w.balance >= 0
+                  ? `สวัสดิการคงเหลือ ${baht(w.balance)} · ใช้เกินได้ ${baht(w.creditLimit)}`
+                  : `ใช้เกินสวัสดิการ ${baht(-w.balance)} · หักเงินเดือนรอบนี้`}
           </T>
         </View>
 
-        <View style={{ flexDirection: "row", gap: 8 }}>
-          <Action icon="pay" label="โอนเงิน" disabled={!canMove} onPress={() => router.push("/send/recipient")} />
-          <Action icon="plus" label="เติมเงิน" disabled={!canMove} onPress={() => router.push("/topup")} />
-          <Action icon="target" label="ออมเงิน" onPress={() => router.navigate("/save")} />
-          <Action icon="list" label="รายการ" onPress={() => router.navigate("/activity")} />
-        </View>
+        <Pressable
+          accessibilityRole="button"
+          disabled={!w}
+          onPress={() => {
+            setPay(null);
+            router.push("/scan");
+          }}
+          style={({ pressed }) => ({
+            height: 64,
+            borderRadius: radius.lg,
+            backgroundColor: pressed ? color.accentPressed : color.ink,
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 12,
+            opacity: w ? 1 : 0.4,
+          })}
+        >
+          <Icon name="qr" size={28} color="#FFFFFF" />
+          <T v="h1" style={{ color: "#FFFFFF" }}>
+            สแกนจ่าย
+          </T>
+        </Pressable>
+
+        {w ? (
+          <Card style={{ padding: 16, gap: 8 }}>
+            <View style={{ flexDirection: "row", justifyContent: "space-between" }}>
+              <T v="body" style={{ fontSize: 15 }}>
+                ใช้วันนี้ {baht(w.spentToday)}
+              </T>
+              <T v="caption" style={{ fontSize: 14 }}>
+                วงเงินต่อวัน {baht(w.dailyLimit)}
+              </T>
+            </View>
+            <View style={{ height: 8, borderRadius: 4, backgroundColor: color.neutralSoft, overflow: "hidden" }}>
+              <View style={{ width: `${usedPct}%`, height: 8, backgroundColor: color.accent }} />
+            </View>
+          </Card>
+        ) : null}
 
         <View style={{ gap: 8 }}>
           <View style={{ flexDirection: "row", justifyContent: "space-between", alignItems: "center" }}>

@@ -4,28 +4,28 @@ import { api, errorText } from "@/lib/api";
 import { maskPhone } from "@/lib/format";
 import { useStore } from "@/lib/store";
 
-/** OTP is verified server-side together with the PIN in /auth/register (next screen). */
-export default function RegisterOtp() {
-  const { register, setRegister, devOtp } = useStore();
-  if (!register.otpId) {
-    router.replace("/register");
+/** The code is checked by the server together with the PIN (next screen). */
+export default function ActivateOtp() {
+  const { activate, setActivate, devOtp } = useStore();
+  if (!activate.otpId) {
+    router.replace("/activate");
     return null;
   }
   return (
     <OtpScreen
       title="ยืนยันเบอร์โทร"
-      maskedPhone={maskPhone(register.phone)}
+      maskedPhone={maskPhone(activate.phone)}
       devCode={devOtp.current}
       onSubmit={async (code) => {
-        setRegister({ code });
-        router.push("/register/pin");
+        setActivate({ code });
+        router.push("/activate/pin");
         return null;
       }}
       onResend={async () => {
         try {
-          const r = await api.registerOtp(register.phone);
+          const r = await api.activateOtp(activate.phone);
           devOtp.current = r.code;
-          setRegister({ otpId: r.otpId, code: undefined });
+          setActivate({ otpId: r.otpId, code: undefined });
           return null;
         } catch (e) {
           return errorText(e);

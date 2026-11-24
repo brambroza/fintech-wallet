@@ -1,5 +1,17 @@
-import * as SecureStore from "expo-secure-store";
+import { Platform } from "react-native";
+import * as SecureStoreNative from "expo-secure-store";
 import * as Crypto from "expo-crypto";
+
+/** Keychain/Keystore on devices; localStorage only for the web preview build. */
+const SecureStore =
+  Platform.OS === "web"
+    ? {
+        ...SecureStoreNative,
+        getItemAsync: async (k: string) => globalThis.localStorage?.getItem(k) ?? null,
+        setItemAsync: async (k: string, v: string) => globalThis.localStorage?.setItem(k, v),
+        deleteItemAsync: async (k: string) => globalThis.localStorage?.removeItem(k),
+      }
+    : SecureStoreNative;
 
 /**
  * Secrets live in the OS keychain/keystore, never AsyncStorage.
@@ -13,7 +25,7 @@ const K = {
   biometric: "wallet.biometric_enabled",
 } as const;
 
-const opts: SecureStore.SecureStoreOptions = { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY };
+const opts: SecureStoreNative.SecureStoreOptions = { keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY };
 
 let accessToken: string | null = null;
 let deviceIdCache: string | null = null;

@@ -14,31 +14,42 @@ export class ApiError extends Error {
   }
 }
 
-// ---------- types (mirror apps/api) ----------
-export type KycStatus = "none" | "pending" | "approved" | "rejected";
+// ---------- types (mirror apps/api canteen routes) ----------
 export type Tokens = { accessToken: string; refreshToken: string; expiresIn: number };
 export type OtpChallenge = { otpId: string; expiresAt: string; code?: string };
-export type Me = { id: string; phone: string; displayName: string; kyc: { status: KycStatus; reason: string | null }; balance: number; dailyLimit: number };
-export type Target =
-  | { kind: "wallet"; phone: string }
-  | { kind: "promptpay"; id: string }
-  | { kind: "bank"; bankCode: string; accountNo: string };
-export type Party = { kind: string; name: string; ref: string; target?: Target };
+export type Wallet = {
+  orgId: string;
+  orgName: string;
+  mode: "credit" | "prepaid";
+  balance: number;
+  available: number;
+  creditLimit: number;
+  dailyLimit: number;
+  spentToday: number;
+  welfareAmount: number;
+};
+export type Me = {
+  id: string;
+  phone: string | null;
+  displayName: string;
+  lineLinked: boolean;
+  roles: { role: "employee" | "hr" | "merchant"; orgId: string; orgName: string }[];
+  wallet: Wallet | null;
+};
+export type Party = { kind: string; name: string; ref: string };
 export type Txn = {
   id: string;
-  type: "p2p" | "topup" | "payout" | "goal_deposit" | "reversal";
+  type: "purchase" | "welfare" | "payroll_settle" | "topup" | "refund" | string;
   status: "pending" | "completed" | "failed";
   amount: number;
-  fee: number;
   delta: number;
   direction: "in" | "out";
   counterparty: Party | null;
+  channel: string | null;
   note: string | null;
-  failureReason: string | null;
   createdAt: string;
 };
-export type Quote = { to: Party; amount: number; fee: number; total: number };
-export type Goal = { id: string; name: string; target: number; saved: number };
+export type PayTarget = { merchantId: string; merchantName: string; amount: number | null; chargeId: string | null };
 
 // ---------- transport ----------
 let refreshing: Promise<boolean> | null = null;
@@ -61,14 +72,15 @@ async function refresh(): Promise<boolean> {
 }
 
 async function raw<T>(method: string, path: string, body?: unknown, auth = true): Promise<T> {
-  const headers: Record<string, string> = { "content-type": "application/json" };
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers["content-type"] = "application/json";
   const token = session.getAccess();
   if (auth && token) headers.authorization = `Bearer ${token}`;
   let res: Response;
   try {
     res = await fetch(`${BASE}${path}`, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   } catch {
-    throw new ApiError(0, "NETWORK", "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่");
+    throw new ApiError(0, "NETWORK", "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้");
   }
   const json = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -91,10 +103,9 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 // ---------- endpoints ----------
 export const api = {
   refresh,
-  registerOtp: async (phone: string) =>
-    raw<OtpChallenge>("POST", "/auth/register/otp", { phone, deviceId: await session.deviceId() }, false),
-  register: async (b: { otpId: string; code: string; pin: string; displayName: string }) =>
-    raw<Tokens>("POST", "/auth/register", { ...b, deviceId: await session.deviceId() }, false),
+  activateOtp: async (phone: string) => raw<OtpChallenge>("POST", "/auth/activate/otp", { phone, deviceId: await session.deviceId() }, false),
+  activate: async (otpId: string, code: string, pin: string) =>
+    raw<Tokens>("POST", "/auth/activate", { otpId, code, pin, deviceId: await session.deviceId() }, false),
   login: async (phone: string, pin: string) =>
     raw<({ otpRequired: false } & Tokens) | ({ otpRequired: true; maskedPhone: string } & OtpChallenge)>(
       "POST",
@@ -108,28 +119,12 @@ export const api = {
   changePin: (currentPin: string, newPin: string) => call<{ ok: true }>("POST", "/auth/pin/change", { currentPin, newPin }),
   logout: () => call<{ ok: true }>("POST", "/auth/logout"),
 
-  me: () => call<Me>("GET", "/me"),
-  kyc: () => call<{ status: KycStatus; reason: string | null }>("GET", "/kyc"),
-  submitKyc: (b: { method: "id_card"; idCardImage: string; selfieImage: string } | { method: "ndid" }) =>
-    call<{ status: KycStatus; reason: string | null }>("POST", "/kyc/submit", b),
-
-  transactions: (p: { cursor?: number | null; filter?: "all" | "in" | "out"; limit?: number } = {}) => {
-    const q = new URLSearchParams();
-    if (p.cursor) q.set("cursor", String(p.cursor));
-    q.set("filter", p.filter ?? "all");
-    q.set("limit", String(p.limit ?? 20));
-    return call<{ items: Txn[]; nextCursor: number | null }>("GET", `/wallet/transactions?${q}`);
-  },
-  topup: (amount: number, idempotencyKey: string) => call<Txn>("POST", "/wallet/topup", { amount, idempotencyKey }),
-  quote: (to: Target, amount: number) => call<Quote>("POST", "/transfers/quote", { to, amount }),
-  transfer: (b: { to: Target; amount: number; pin: string; note?: string; idempotencyKey: string }) =>
-    call<Txn>("POST", "/transfers", b),
-  recents: () => call<Party[]>("GET", "/transfers/recents"),
-  goals: () => call<Goal[]>("GET", "/goals"),
-  createGoal: (name: string, target: number) => call<Goal>("POST", "/goals", { name, target }),
-  moveGoal: (id: string, amount: number, direction: "deposit" | "withdraw") =>
-    call<{ id: string; saved: number }>("POST", `/goals/${id}/move`, { amount, direction }),
-  insights: () => call<{ spent: number; byType: Record<string, number> }>("GET", "/insights/month"),
+  me: () => call<Me>("GET", "/canteen/me"),
+  resolve: (qr: string) => call<PayTarget>("POST", "/canteen/pay/resolve", { qr }),
+  pay: (b: { merchantId: string; chargeId?: string | null; amount: number; pin: string; idempotencyKey: string }) =>
+    call<Txn>("POST", "/canteen/pay", { ...b, chargeId: b.chargeId ?? undefined, channel: "app" }),
+  transactions: (cursor?: number | null) =>
+    call<{ items: Txn[]; nextCursor: number | null }>("GET", `/canteen/transactions${cursor ? `?cursor=${cursor}` : ""}`),
 };
 
 /** Thai, user-facing message for an API error. */
@@ -137,8 +132,10 @@ export function errorText(e: unknown): string {
   if (!(e instanceof ApiError)) return "เกิดข้อผิดพลาด ลองใหม่อีกครั้ง";
   const left = e.data.attemptsLeft as number | undefined;
   const map: Record<string, string> = {
-    NETWORK: e.message,
-    PHONE_TAKEN: "เบอร์นี้สมัครไว้แล้ว เข้าสู่ระบบแทน",
+    NETWORK: "เชื่อมต่อเซิร์ฟเวอร์ไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่",
+    NOT_INVITED: "เบอร์นี้ยังไม่ได้ถูกเพิ่มโดยฝ่ายบุคคล",
+    ALREADY_ACTIVE: "เปิดใช้งานแล้ว เข้าสู่ระบบได้เลย",
+    NOT_ACTIVATED: "บัญชียังไม่ได้เปิดใช้งาน",
     OTP_INVALID: "รหัส OTP ไม่ถูกต้อง",
     OTP_EXPIRED: "รหัส OTP หมดอายุ ขอรหัสใหม่",
     OTP_TOO_MANY_ATTEMPTS: "ใส่รหัสผิดหลายครั้ง ขอรหัสใหม่",
@@ -147,12 +144,15 @@ export function errorText(e: unknown): string {
     PIN_INVALID: left !== undefined ? `PIN ไม่ถูกต้อง เหลืออีก ${left} ครั้ง` : "PIN ไม่ถูกต้อง",
     LOCKED: "ใส่ PIN ผิดหลายครั้ง ล็อก 15 นาที",
     LOGIN_FAILED: "เบอร์โทรหรือ PIN ไม่ถูกต้อง",
-    KYC_REQUIRED: "ต้องยืนยันตัวตนก่อนจึงจะโอนหรือเติมเงินได้",
-    KYC_PENDING: "กำลังตรวจสอบตัวตนอยู่",
-    INSUFFICIENT_FUNDS: "ยอดเงินในบัญชีไม่พอ",
-    DAILY_LIMIT: "เกินวงเงินโอนต่อวัน",
-    RECIPIENT_NOT_FOUND: "ไม่พบบัญชีผู้รับ",
-    SELF_TRANSFER: "โอนเข้าบัญชีตัวเองไม่ได้",
+    ROLE_REQUIRED: "บัญชีนี้ไม่ได้เป็นพนักงานในระบบโรงอาหาร",
+    INSUFFICIENT_FUNDS: "ยอดเงินหรือวงเงินไม่พอ",
+    DAILY_LIMIT: "เกินวงเงินใช้จ่ายต่อวัน",
+    QR_INVALID: "QR นี้ไม่ใช่ QR ร้านในโรงอาหาร",
+    CHARGE_CLOSED: "QR นี้ถูกใช้ไปแล้ว",
+    CHARGE_EXPIRED: "QR หมดอายุ ให้ร้านสร้างใหม่",
+    AMOUNT_MISMATCH: "ยอดเงินไม่ตรงกับที่ร้านเรียกเก็บ",
+    MERCHANT_NOT_FOUND: "ไม่พบร้านค้า",
+    EMPLOYEE_INACTIVE: "บัญชีถูกระงับ ติดต่อฝ่ายบุคคล",
     VALIDATION: "ข้อมูลไม่ถูกต้อง",
   };
   return map[e.code] ?? "เกิดข้อผิดพลาด ลองใหม่อีกครั้ง";

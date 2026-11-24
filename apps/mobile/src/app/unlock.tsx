@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Pressable, View } from "react-native";
 import { router } from "expo-router";
+import { goHome } from "@/lib/nav";
 import * as LocalAuthentication from "expo-local-authentication";
 import { PinPad } from "@/components/PinPad";
 import { Avatar, Screen, T } from "@/components/ui";
@@ -20,8 +21,8 @@ export default function Unlock() {
   const [bio, setBio] = useState(false);
 
   const enter = useCallback(async () => {
-    const me = await loadMe();
-    router.replace(me && me.kyc.status !== "approved" && me.kyc.status !== "pending" ? "/kyc" : "/home");
+    await loadMe();
+    goHome();
   }, [loadMe]);
 
   const expired = useCallback(async () => {
@@ -30,7 +31,7 @@ export default function Unlock() {
   }, []);
 
   const tryBiometric = useCallback(async () => {
-    const r = await LocalAuthentication.authenticateAsync({ promptMessage: "ปลดล็อก Wallet", cancelLabel: "ใช้ PIN" });
+    const r = await LocalAuthentication.authenticateAsync({ promptMessage: "ปลดล็อก Canteen Wallet", cancelLabel: "ใช้ PIN" });
     if (!r.success) return;
     setBusy(true);
     if (await api.refresh()) await enter();

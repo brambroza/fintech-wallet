@@ -3,17 +3,10 @@ import { ActivityIndicator, SectionList, View } from "react-native";
 import { useFocusEffect } from "expo-router";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { TxRow } from "@/components/TxRow";
-import { Chip, Header, T } from "@/components/ui";
+import { Header, T } from "@/components/ui";
 import { api, type Txn } from "@/lib/api";
 import { thaiDay } from "@/lib/format";
 import { color, radius } from "@/theme";
-
-type Filter = "all" | "in" | "out";
-const FILTERS: { k: Filter; label: string }[] = [
-  { k: "all", label: "ทั้งหมด" },
-  { k: "in", label: "เงินเข้า" },
-  { k: "out", label: "เงินออก" },
-];
 
 function group(items: Txn[]) {
   const map = new Map<string, Txn[]>();
@@ -25,17 +18,16 @@ function group(items: Txn[]) {
 }
 
 export default function Activity() {
-  const [filter, setFilter] = useState<Filter>("all");
   const [items, setItems] = useState<Txn[]>([]);
   const [cursor, setCursor] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(false);
 
-  const load = useCallback(async (f: Filter, from: number | null) => {
+  const load = useCallback(async (from: number | null) => {
     setLoading(true);
     setError(false);
     try {
-      const r = await api.transactions({ filter: f, cursor: from });
+      const r = await api.transactions(from);
       setItems((prev) => (from ? [...prev, ...r.items] : r.items));
       setCursor(r.nextCursor);
     } catch {
@@ -47,18 +39,13 @@ export default function Activity() {
 
   useFocusEffect(
     useCallback(() => {
-      load(filter, null);
-    }, [filter, load]),
+      load(null);
+    }, [load]),
   );
 
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={["top"]}>
       <Header title="รายการ" back={false} />
-      <View style={{ flexDirection: "row", gap: 8, paddingHorizontal: 20, paddingBottom: 14 }}>
-        {FILTERS.map((f) => (
-          <Chip key={f.k} label={f.label} active={filter === f.k} onPress={() => setFilter(f.k)} />
-        ))}
-      </View>
       <SectionList
         sections={group(items)}
         keyExtractor={(t) => t.id}
@@ -88,7 +75,7 @@ export default function Activity() {
             <TxRow t={item} />
           </View>
         )}
-        onEndReached={() => cursor && !loading && load(filter, cursor)}
+        onEndReached={() => cursor && !loading && load(cursor)}
         onEndReachedThreshold={0.4}
         ListEmptyComponent={
           loading ? undefined : (
@@ -99,7 +86,7 @@ export default function Activity() {
         }
         ListFooterComponent={loading ? <ActivityIndicator color={color.accent} style={{ padding: 16 }} /> : undefined}
         refreshing={false}
-        onRefresh={() => load(filter, null)}
+        onRefresh={() => load(null)}
       />
     </SafeAreaView>
   );

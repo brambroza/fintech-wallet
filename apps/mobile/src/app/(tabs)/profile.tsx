@@ -53,7 +53,6 @@ export default function Profile() {
       },
     ]);
 
-  const kycOk = me?.kyc.status === "approved";
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: color.bg }} edges={["top"]}>
       <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 24, gap: 12 }}>
@@ -64,23 +63,7 @@ export default function Profile() {
               {me?.displayName ?? " "}
             </T>
             <T v="caption" style={{ fontSize: 14 }}>
-              {me?.phone ?? " "}
-            </T>
-          </View>
-          <View
-            style={{
-              flexDirection: "row",
-              alignItems: "center",
-              gap: 4,
-              paddingHorizontal: 10,
-              paddingVertical: 4,
-              borderRadius: radius.pill,
-              backgroundColor: kycOk ? color.okSoft : color.warnSoft,
-            }}
-          >
-            <Icon name={kycOk ? "check" : "clock"} size={14} color={kycOk ? color.ok : color.warnInk} strokeWidth={2.4} />
-            <T v="caption" style={{ color: kycOk ? color.ok : color.warnInk, fontWeight: "600" }}>
-              {kycOk ? "ยืนยันแล้ว" : "ยังไม่ยืนยัน"}
+              {me?.wallet?.orgName ?? me?.phone ?? " "}
             </T>
           </View>
         </View>
@@ -91,12 +74,6 @@ export default function Profile() {
             <>
               <Divider />
               <ListRow left={<IconBox name="face" />} title="Face ID / ลายนิ้วมือ" right={<Switch value={bio} onChange={toggleBio} label="Face ID / ลายนิ้วมือ" />} />
-            </>
-          ) : null}
-          {!kycOk ? (
-            <>
-              <Divider />
-              <ListRow left={<IconBox name="shield" />} title="ยืนยันตัวตน" sub="จำเป็นสำหรับการโอนและเติมเงิน" onPress={() => router.push(me?.kyc.status === "pending" ? "/kyc/pending" : "/kyc")} />
             </>
           ) : null}
         </Card>
