@@ -6,6 +6,7 @@ import { loadConfig } from "../src/config.js";
 import { createPool, type Db } from "../src/db.js";
 import { migrate } from "../src/migrate.js";
 import { createSandboxProviders, SandboxSms } from "../src/providers/index.js";
+import type { SandboxLineNotifier } from "../src/providers/line.js";
 
 const DATABASE_URL = process.env.TEST_DATABASE_URL_CANTEEN ?? "postgres://postgres@localhost:5433/wallet_test_canteen";
 const ADMIN = "admin-token-admin-token-123456";
@@ -13,6 +14,7 @@ const ADMIN = "admin-token-admin-token-123456";
 let app: FastifyInstance;
 let db: Db;
 let sms: SandboxSms;
+let line: SandboxLineNotifier;
 
 const req = async (method: string, url: string, body?: unknown, token?: string, headers: Record<string, string> = {}) => {
   const r = await app.inject({
@@ -55,6 +57,7 @@ beforeAll(async () => {
   } as NodeJS.ProcessEnv);
   const providers = createSandboxProviders({ kycAutoApprove: false });
   sms = providers.sms as SandboxSms;
+  line = providers.notify as SandboxLineNotifier;
   app = await buildApp({ cfg, db, providers });
 });
 
@@ -201,6 +204,92 @@ describe("canteen payments (credit mode)", () => {
     const after = await req("POST", "/auth/line/login", { idToken: "sandbox:U1234abcd", deviceId: "liff-device-1" });
     expect(after.body.linked).toBe(true);
     expect((await req("GET", "/canteen/me", undefined, after.body.accessToken)).body.lineLinked).toBe(true);
+  });
+
+  it("refund: shop refunds a purchase once; employee gets LINE receipts", async () => {
+    const before = (await req("GET", "/canteen/me", undefined, somchai)).body.wallet.balance;
+    const c = await req("POST", "/shop/charges", { amount: 3000 }, shop);
+    const paid = await req("POST", "/canteen/pay", { merchantId, chargeId: c.body.chargeId, amount: 3000, pin: "135790", idempotencyKey: key() }, somchai);
+    expect(paid.body.status).toBe("completed");
+    await new Promise((r) => setTimeout(r, 100));
+    expect(line.outbox.at(-1)).toMatchObject({ to: "U1234abcd" });
+    expect(line.outbox.at(-1)!.text).toContain("จ่าย ฿30.00 ให้ ร้านป้าแดง");
+
+    const salesBefore = (await req("GET", "/shop", undefined, shop)).body.today;
+    const r = await req("POST", `/shop/transactions/${paid.body.id}/refund`, { reason: "กดยอดผิด" }, shop);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect((await req("GET", "/canteen/me", undefined, somchai)).body.wallet.balance).toBe(before);
+    expect((await req("POST", `/shop/transactions/${paid.body.id}/refund`, {}, shop)).body.error.code).toBe("ALREADY_REFUNDED");
+    const salesAfter = (await req("GET", "/shop", undefined, shop)).body.today;
+    expect(salesAfter).toMatchObject({ count: salesBefore.count - 1, total: salesBefore.total - 3000 });
+    const list = await req("GET", "/shop/transactions", undefined, shop);
+    expect(list.body.find((t: { id: string }) => t.id === paid.body.id).refunded).toBe(true);
+    await new Promise((r) => setTimeout(r, 100));
+    expect(line.outbox.at(-1)!.text).toContain("คืนเงิน ฿30.00");
+
+    // Only the shop that was paid can refund, and only inside the window.
+    const other = await req("POST", "/org/merchants", { name: "ร้านกาแฟ", ownerName: "ลุงชัย", ownerPhone: "0866666666" }, hr);
+    const coffee = await activate("0866666666");
+    const p2 = await req("POST", "/canteen/pay", { merchantId, amount: 1000, pin: "135790", idempotencyKey: key() }, somchai);
+    expect((await req("POST", `/shop/transactions/${p2.body.id}/refund`, {}, coffee)).body.error.code).toBe("TX_NOT_FOUND");
+    expect(other.status).toBe(200);
+    await db.query("UPDATE transactions SET created_at = now() - interval '25 hours' WHERE id = $1", [p2.body.id]);
+    expect((await req("POST", `/shop/transactions/${p2.body.id}/refund`, {}, shop)).body.error.code).toBe("REFUND_WINDOW");
+  });
+
+  it("shop quick-price buttons", async () => {
+    const items = [{ label: "ข้าว 1 อย่าง", amount: 3500 }, { label: "ข้าว 2 อย่าง", amount: 4500 }];
+    expect((await req("PUT", "/shop/quick-amounts", { items }, shop)).status).toBe(200);
+    expect((await req("GET", "/shop", undefined, shop)).body.quickAmounts).toEqual(items);
+    const tooMany = Array.from({ length: 13 }, (_, i) => ({ label: `x${i}`, amount: 100 }));
+    expect((await req("PUT", "/shop/quick-amounts", { items: tooMany }, shop)).status).toBe(400);
+  });
+
+  it("HR back-enters a paper slip after an outage (idempotent, no PIN)", async () => {
+    const e1 = (await req("GET", "/org/employees?q=E001", undefined, hr)).body[0];
+    const before = (await req("GET", "/canteen/me", undefined, somchai)).body.wallet.balance;
+    const k = key();
+    const body = { memberId: e1.id, merchantId, amount: 1500, note: "ใบที่ 12", idempotencyKey: k };
+    const r = await req("POST", "/org/manual-purchases", body, hr);
+    expect(r.status, JSON.stringify(r.body)).toBe(200);
+    expect(r.body.channel).toBe("manual");
+    await req("POST", "/org/manual-purchases", body, hr);
+    expect((await req("GET", "/canteen/me", undefined, somchai)).body.wallet.balance).toBe(before - 1500);
+    expect((await req("POST", "/org/manual-purchases", body, somchai)).status).toBe(403);
+  });
+
+  it("offboarding: positive balance cashed out, negative goes to the final payroll", async () => {
+    const e1 = (await req("GET", "/org/employees?q=E001", undefined, hr)).body[0];
+    const bal = (await req("GET", "/canteen/me", undefined, somchai)).body.wallet.balance;
+    expect(bal).toBeGreaterThan(0);
+    const off = await req("POST", `/org/employees/${e1.id}/offboard`, { leftover: "cash_out" }, hr);
+    expect(off.body).toMatchObject({ moved: bal, finalDeduct: 0 });
+    expect((await req("POST", "/canteen/pay", { merchantId, amount: 100, pin: "135790", idempotencyKey: key() }, somchai)).status).toBe(403);
+    expect((await req("POST", `/org/employees/${e1.id}/offboard`, { leftover: "cash_out" }, hr)).body.error.code).toBe("ALREADY_OFFBOARDED");
+
+    // Credit mode: สมหญิง (badge-only) overspends, then leaves.
+    await req("PATCH", "/org", { moneyMode: "credit" }, hr);
+    const e2 = (await req("GET", "/org/employees?q=E002", undefined, hr)).body[0];
+    const badge = (await req("POST", `/org/employees/${e2.id}/badge`, {}, hr)).body.qr;
+    const spend = e2.balance + 12000;
+    const p = await req("POST", "/shop/badge-pay", { badge, amount: spend, pin: "246810", idempotencyKey: key() }, shop);
+    expect(p.body.status, JSON.stringify(p.body)).toBe("completed");
+    const off2 = await req("POST", `/org/employees/${e2.id}/offboard`, { leftover: "forfeit" }, hr);
+    expect(off2.body).toMatchObject({ moved: 0, finalDeduct: 12000 });
+    const pr = await req("GET", "/org/payroll", undefined, hr);
+    expect(pr.body.items.find((x: { memberId: string }) => x.memberId === e2.id)).toMatchObject({ deduct: 12000, offboarded: true });
+    expect((await req("POST", "/shop/badge-pay", { badge, amount: 100, pin: "246810", idempotencyKey: key() }, shop)).body.error.code).toBe("BADGE_NOT_FOUND");
+  });
+
+  it("rate limits are per device, not per IP (factory NAT)", async () => {
+    // All injected requests come from 127.0.0.1, like employees behind one factory router.
+    for (let i = 0; i < 15; i++) {
+      const r = await req("POST", "/auth/login", { phone: "0899999999", pin: "000000", deviceId: `nat-device-${i}` });
+      expect(r.status).not.toBe(429);
+    }
+    const codes: number[] = [];
+    for (let i = 0; i < 12; i++) codes.push((await req("POST", "/auth/login", { phone: "0899999999", pin: "000000", deviceId: "same-device-1" })).status);
+    expect(codes).toContain(429);
   });
 
   it("ledger stays balanced", async () => {

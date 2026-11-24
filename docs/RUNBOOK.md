@@ -25,6 +25,8 @@ Before the pilot starts, collect from the factory: signed DPA (GO Along = proces
 1. LINE Developers → the factory's (or GO Along's) Provider → **LINE Login** channel → note the **Channel ID** → `LINE_CHANNEL_ID`.
 2. LIFF tab → Add → Size *Full*, Endpoint URL `https://APP_DOMAIN/liff`, Scopes `openid` + `profile`, Scan QR *on* → note LIFF ID → Jenkins `LIFF_ID` → rebuild web.
 3. Put `https://liff.line.me/<LIFF ID>` in the LINE OA rich menu ("จ่ายค่าอาหาร").
+4. Payment receipts (optional but recommended): the LINE OA's **Messaging API** channel → issue a long-lived channel access token → `LINE_MESSAGING_TOKEN`. The Messaging API channel must be under the **same Provider** as the LINE Login channel, otherwise user ids don't match and no message arrives.
+   Every payment and refund is one push message. Estimate: employees × 2 meals × 22 days (300 people ≈ 13,200/month) and pick the OA plan with enough quota; when the quota runs out, payments still work, only receipts stop.
 
 ## 4. Backups and restore
 
@@ -54,7 +56,21 @@ Migrations are additive; if a release added a migration, restore the pre-deploy 
 - Month end per factory: HR exports payroll CSV → payroll runs → HR clicks "บันทึกว่าหักแล้ว"; HR records shop payouts.
 - Watch `audit_log` for `pin.locked` spikes and `refresh.reuse_detected`.
 
-## 7. Incidents
+## 7. When the canteen can't reach the system (internet / server down)
+
+Payments need the server; there is no offline mode. Agree this with HR and the shops **before** the pilot:
+
+1. Shops switch to **paper slips** (ใบจด): employee code, name, amount, shop, date/time, **employee's signature**. Number the slips. Cash is also fine if the factory allows it.
+2. Badge-only and app users alike use slips; don't take photos of PINs or write PINs down.
+3. When the system is back, HR enters each slip: พนักงาน → ⋮ → **บันทึกรายการย้อนหลัง (ใบจด)**, with the slip number in the note. No PIN is needed and the daily limit is skipped; the credit/balance floor still applies — if a slip is rejected for insufficient balance, settle it in cash.
+4. Keep the slips with the month's payroll documents (they are the evidence for those entries; the audit log records which HR user entered each one).
+
+## 8. Refunds and employees leaving
+
+- **Refund:** the shop does it itself (ยอดวันนี้ → คืนเงิน) within `REFUND_WINDOW_HOURS` (default 24 h), full amount, once per purchase. Older ones: HR handles case by case (there is no HR refund screen yet).
+- **Employee leaves:** HR → พนักงาน → ⋮ → **ทำเรื่องลาออก**. The account and badge stop working at once. A negative balance shows in the next payroll export marked "ลาออก งวดสุดท้าย"; a positive balance is either paid back in cash at the HR desk or returned to the welfare budget (choose cash in prepaid mode — that money may be the employee's own). Re-hire = "กลับมาทำงาน".
+
+## 9. Incidents
 
 | Symptom | First check |
 |---|---|
@@ -62,3 +78,5 @@ Migrations are additive; if a release added a migration, restore the pre-deploy 
 | Shop QR never turns "paid" | Employee got an error? `charges` row status; clocks (expiry 180 s) |
 | LIFF login loops | Endpoint URL matches `APP_DOMAIN/liff`; `LINE_CHANNEL_ID` matches the LIFF's channel |
 | 401 for everyone | `JWT_SECRET` changed → everyone must log in again |
+| No LINE receipts | `LINE_MESSAGING_TOKEN` set? OA monthly quota used up? API logs `[notify] LINE push failed` |
+| Many `RATE_LIMITED` at lunch | Limits are per device/session (not per IP); a single device hitting it is a stuck client or abuse |

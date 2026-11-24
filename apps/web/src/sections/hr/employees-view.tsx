@@ -10,7 +10,10 @@ import Table from '@mui/material/Table';
 import Button from '@mui/material/Button';
 import Dialog from '@mui/material/Dialog';
 import MenuItem from '@mui/material/MenuItem';
+import Radio from '@mui/material/Radio';
 import TableRow from '@mui/material/TableRow';
+import RadioGroup from '@mui/material/RadioGroup';
+import FormControlLabel from '@mui/material/FormControlLabel';
 import TextField from '@mui/material/TextField';
 import TableBody from '@mui/material/TableBody';
 import TableCell from '@mui/material/TableCell';
@@ -26,7 +29,7 @@ import TableContainer from '@mui/material/TableContainer';
 
 import { parseCsv } from 'src/lib/csv';
 import { PageHeader } from 'src/layouts/hr-layout';
-import { api, baht, newKey, toSatang, type Org, errorText, type Employee, normalizePhone } from 'src/lib/api';
+import { api, baht, newKey, toSatang, type Org, type Shop, errorText, type Employee, normalizePhone } from 'src/lib/api';
 
 import { Label } from 'src/components/label';
 import { toast } from 'src/components/snackbar';
@@ -110,6 +113,139 @@ function ImportDialog({ open, onClose, onDone }: { open: boolean; onClose: () =>
   );
 }
 
+
+// ---------- employee leaves ----------
+function OffboardDialog({ e, mode, onClose, onDone }: { e: Employee | null; mode: Org['moneyMode'] | undefined; onClose: () => void; onDone: () => void }) {
+  const [leftover, setLeftover] = useState<'cash_out' | 'forfeit'>('forfeit');
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (e) setLeftover(mode === 'prepaid' ? 'cash_out' : 'forfeit');
+  }, [e, mode]);
+
+  const submit = async () => {
+    if (!e) return;
+    setBusy(true);
+    try {
+      const r = await api.offboard(e.id, leftover);
+      if (r.finalDeduct) toast.success(`ทำเรื่องลาออกแล้ว · หักเงินเดือนงวดสุดท้าย ${baht(r.finalDeduct)} (อยู่ในหน้าหักเงินเดือน)`);
+      else if (r.moved && r.leftover === 'cash_out') toast.success(`ทำเรื่องลาออกแล้ว · จ่ายเงินสดคืนพนักงาน ${baht(r.moved)}`);
+      else toast.success('ทำเรื่องลาออกแล้ว');
+      onDone();
+      onClose();
+    } catch (x) {
+      toast.error(errorText(x));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!e} onClose={onClose} fullWidth maxWidth="sm">
+      <DialogTitle>ทำเรื่องลาออก · {e?.name}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ pt: 1 }}>
+          <Typography variant="body2">บัญชีและบัตร QR ของพนักงานจะใช้จ่ายไม่ได้ทันที</Typography>
+          {e && e.balance < 0 && (
+            <Alert severity="warning">
+              ค้างชำระ <b>{baht(-e.balance)}</b> ยอดนี้จะอยู่ในหน้า &quot;หักเงินเดือน&quot; ให้หักจากเงินเดือนงวดสุดท้าย แล้วกดบันทึกว่าหักแล้วตามปกติ
+            </Alert>
+          )}
+          {e && e.balance === 0 && <Alert severity="info">ไม่มียอดคงค้าง</Alert>}
+          {e && e.balance > 0 && (
+            <>
+              <Alert severity="info">
+                มียอดคงเหลือ <b>{baht(e.balance)}</b> เลือกว่าจะจัดการอย่างไร
+              </Alert>
+              <RadioGroup value={leftover} onChange={(ev) => setLeftover(ev.target.value as 'cash_out' | 'forfeit')}>
+                <FormControlLabel value="cash_out" control={<Radio />} label={`จ่ายเงินสดคืนพนักงาน ${baht(e.balance)} ที่ฝ่ายบุคคล`} />
+                <FormControlLabel value="forfeit" control={<Radio />} label="คืนเป็นงบสวัสดิการบริษัท (ไม่จ่ายเงินสด)" />
+              </RadioGroup>
+              {mode === 'prepaid' && leftover === 'forfeit' && (
+                <Alert severity="warning">โหมดเติมเงินล่วงหน้า ยอดนี้อาจเป็นเงินที่พนักงานเติมเอง ควรจ่ายเงินสดคืน</Alert>
+              )}
+            </>
+          )}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button color="inherit" onClick={onClose}>
+          ยกเลิก
+        </Button>
+        <LoadingButton variant="contained" color="error" loading={busy} onClick={submit}>
+          ยืนยันลาออก
+        </LoadingButton>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+// ---------- back-entry of paper slips after an outage ----------
+function ManualPurchaseDialog({ e, onClose, onDone }: { e: Employee | null; onClose: () => void; onDone: () => void }) {
+  const [shops, setShops] = useState<Shop[]>([]);
+  const [f, setF] = useState({ shop: '', amount: '', note: '', key: '' });
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!e) return;
+    setF({ shop: '', amount: '', note: '', key: newKey() });
+    api
+      .shops()
+      .then((s) => setShops(s.filter((x) => x.status === 'active')))
+      .catch(() => {});
+  }, [e]);
+
+  const amt = toSatang(f.amount);
+  const submit = async () => {
+    if (!e || !amt) return;
+    setBusy(true);
+    try {
+      await api.manualPurchase({ memberId: e.id, merchantId: f.shop, amount: amt, note: f.note.trim(), idempotencyKey: f.key });
+      toast.success(`บันทึก ${baht(amt)} ให้ ${e.name} แล้ว`);
+      onDone();
+      onClose();
+    } catch (x) {
+      toast.error(errorText(x));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={!!e} onClose={onClose} fullWidth maxWidth="xs">
+      <DialogTitle>บันทึกรายการย้อนหลัง · {e?.name}</DialogTitle>
+      <DialogContent>
+        <Stack spacing={2} sx={{ pt: 1 }}>
+          <Typography variant="body2" sx={{ color: 'text.secondary' }}>
+            ใช้กับใบจดที่พนักงานเซ็นไว้ตอนระบบขัดข้องเท่านั้น ไม่ต้องใช้ PIN และไม่นับวงเงินต่อวัน
+          </Typography>
+          <TextField select label="ร้าน" value={f.shop} onChange={(ev) => setF({ ...f, shop: ev.target.value })}>
+            {shops.map((s) => (
+              <MenuItem key={s.id} value={s.id}>
+                {s.name}
+              </MenuItem>
+            ))}
+          </TextField>
+          <TextField label="จำนวนเงิน (บาท)" value={f.amount} onChange={(ev) => setF({ ...f, amount: ev.target.value })} inputProps={{ inputMode: 'decimal' }} />
+          <TextField
+            label="เลขที่ใบจด / วันที่"
+            placeholder="เช่น ใบที่ 12 · 24/11"
+            value={f.note}
+            onChange={(ev) => setF({ ...f, note: ev.target.value })}
+            inputProps={{ maxLength: 80 }}
+          />
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button color="inherit" onClick={onClose}>
+          ยกเลิก
+        </Button>
+        <LoadingButton variant="contained" loading={busy} disabled={!f.shop || !amt || !f.note.trim()} onClick={submit}>
+          บันทึก
+        </LoadingButton>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
 // ----------------------------------------------------------------------
 
 export function HrEmployeesView() {
@@ -123,6 +259,8 @@ export function HrEmployeesView() {
   const [pinStep, setPinStep] = useState<{ first?: string; error?: string | null; reset: number }>({ reset: 0 });
   const [topup, setTopup] = useState<{ e: Employee; amount: string; key: string } | null>(null);
   const [rotate, setRotate] = useState<Employee | null>(null);
+  const [offboard, setOffboard] = useState<Employee | null>(null);
+  const [manual, setManual] = useState<Employee | null>(null);
 
   const load = useCallback(() => {
     api.employees(q || undefined).then(setList).catch((e) => toast.error(errorText(e)));
@@ -234,7 +372,7 @@ export function HrEmployeesView() {
                   <TableCell>{e.department}</TableCell>
                   <TableCell>
                     <Stack direction="row" spacing={0.5}>
-                      {e.status === 'inactive' && <Label color="default">ระงับ</Label>}
+                      {e.offboarded ? <Label color="default">ลาออก</Label> : e.status === 'inactive' && <Label color="default">ระงับ</Label>}
                       {e.activated ? <Label color="success">เปิดใช้แล้ว</Label> : <Label color="warning">ยังไม่เปิดใช้</Label>}
                       {e.lineLinked && <Label color="info">LINE</Label>}
                     </Stack>
@@ -277,13 +415,25 @@ export function HrEmployeesView() {
             <Iconify icon="solar:wallet-linear" sx={{ mr: 1 }} /> รับเงินสด / เติมเงิน
           </MenuItem>
         )}
+        {menu?.e.status === 'active' && (
+          <MenuItem onClick={() => { setManual(menu!.e); setMenu(null); }}>
+            <Iconify icon="solar:document-add-linear" sx={{ mr: 1 }} /> บันทึกรายการย้อนหลัง (ใบจด)
+          </MenuItem>
+        )}
         <MenuItem onClick={() => { toggle(menu!.e); setMenu(null); }} sx={{ color: menu?.e.status === 'active' ? 'error.main' : 'success.main' }}>
           <Iconify icon={menu?.e.status === 'active' ? 'solar:forbidden-circle-linear' : 'solar:check-circle-linear'} sx={{ mr: 1 }} />
-          {menu?.e.status === 'active' ? 'ระงับการใช้งาน' : 'เปิดใช้งานอีกครั้ง'}
+          {menu?.e.status === 'active' ? 'ระงับชั่วคราว' : menu?.e.offboarded ? 'กลับมาทำงาน (เปิดใช้อีกครั้ง)' : 'เปิดใช้งานอีกครั้ง'}
         </MenuItem>
+        {!menu?.e.offboarded && (
+          <MenuItem onClick={() => { setOffboard(menu!.e); setMenu(null); }} sx={{ color: 'error.main' }}>
+            <Iconify icon="solar:logout-2-linear" sx={{ mr: 1 }} /> ทำเรื่องลาออก
+          </MenuItem>
+        )}
       </Menu>
 
       <ImportDialog open={importOpen} onClose={() => setImportOpen(false)} onDone={load} />
+      <OffboardDialog e={offboard} mode={org?.moneyMode} onClose={() => setOffboard(null)} onDone={load} />
+      <ManualPurchaseDialog e={manual} onClose={() => setManual(null)} onDone={load} />
 
       <Dialog open={!!badge} onClose={() => setBadge(null)}>
         <DialogTitle>บัตร QR · {badge?.e.name}</DialogTitle>

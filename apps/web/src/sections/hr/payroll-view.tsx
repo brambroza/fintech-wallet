@@ -18,6 +18,7 @@ import { csvBaht, downloadCsv } from 'src/lib/csv';
 import { PageHeader } from 'src/layouts/hr-layout';
 import { api, baht, bkkDate, errorText, type PayrollItem } from 'src/lib/api';
 
+import { Label } from 'src/components/label';
 import { toast } from 'src/components/snackbar';
 import { Iconify } from 'src/components/iconify';
 import { ConfirmDialog } from 'src/components/custom-dialog';
@@ -45,8 +46,8 @@ export function HrPayrollView() {
     if (!snap) return;
     downloadCsv(
       `payroll-deduction-${cycle}.csv`,
-      ['รหัสพนักงาน', 'ชื่อ', 'แผนก', 'ยอดหัก (บาท)'],
-      snap.items.map((i) => [i.code, i.name, i.department, csvBaht(i.deduct)])
+      ['รหัสพนักงาน', 'ชื่อ', 'แผนก', 'ยอดหัก (บาท)', 'หมายเหตุ'],
+      snap.items.map((i) => [i.code, i.name, i.department, csvBaht(i.deduct), i.offboarded ? 'ลาออก งวดสุดท้าย' : ''])
     );
     setExported(true);
   };
@@ -111,7 +112,9 @@ export function HrPayrollView() {
                 {snap?.items.map((i) => (
                   <TableRow key={i.memberId}>
                     <TableCell>{i.code}</TableCell>
-                    <TableCell>{i.name}</TableCell>
+                    <TableCell>
+                      {i.name} {i.offboarded && <Label color="warning">ลาออก งวดสุดท้าย</Label>}
+                    </TableCell>
                     <TableCell>{i.department}</TableCell>
                     <TableCell align="right">{baht(i.deduct)}</TableCell>
                   </TableRow>

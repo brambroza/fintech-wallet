@@ -3,6 +3,7 @@ import { loadConfig } from "./config.js";
 import { createPool } from "./db.js";
 import { migrate } from "./migrate.js";
 import { createSandboxProviders } from "./providers/index.js";
+import { LineMessagingNotifier } from "./providers/line.js";
 import { ThaiBulkSms } from "./providers/thaibulksms.js";
 
 const cfg = loadConfig();
@@ -12,6 +13,7 @@ const providers = createSandboxProviders({ kycAutoApprove: cfg.KYC_AUTO_APPROVE,
 if (cfg.SMS_PROVIDER === "thaibulksms") {
   providers.sms = new ThaiBulkSms(cfg.THAIBULKSMS_API_KEY!, cfg.THAIBULKSMS_API_SECRET!, cfg.THAIBULKSMS_SENDER!);
 }
+if (cfg.LINE_MESSAGING_TOKEN) providers.notify = new LineMessagingNotifier(cfg.LINE_MESSAGING_TOKEN);
 if (cfg.CONSUMER_WALLET && !cfg.SANDBOX) {
   // KYC vendor and bank payout adapters are sandbox-only; never run the consumer wallet with real money.
   throw new Error("CONSUMER_WALLET needs real KYC/payout adapters before SANDBOX=false");

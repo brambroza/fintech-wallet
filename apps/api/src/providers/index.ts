@@ -4,7 +4,7 @@
  * licensed partner) implement the same interfaces and are swapped in createProviders().
  */
 import { randomUUID } from "node:crypto";
-import { LineApiVerifier, SandboxLineVerifier, type LineVerifier } from "./line.js";
+import { LineApiVerifier, SandboxLineNotifier, SandboxLineVerifier, type LineNotifier, type LineVerifier } from "./line.js";
 
 export interface SmsProvider {
   send(phone: string, message: string): Promise<void>;
@@ -36,6 +36,7 @@ export interface Providers {
   kyc: KycProvider;
   payout: PayoutProvider;
   line: LineVerifier;
+  notify: LineNotifier;
 }
 
 export class SandboxSms implements SmsProvider {
@@ -81,5 +82,6 @@ export function createSandboxProviders(opts: { kycAutoApprove: boolean; lineChan
     payout: new SandboxPayout(),
     // With a channel id set, real LINE tokens are verified even in the sandbox.
     line: opts.lineChannelId ? new LineApiVerifier(opts.lineChannelId) : new SandboxLineVerifier(),
+    notify: new SandboxLineNotifier(),
   };
 }

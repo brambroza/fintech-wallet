@@ -4,13 +4,15 @@ import type { AppCtx } from "../context.js";
 import { withTx } from "../db.js";
 import { err } from "../lib/errors.js";
 import { hashPin, isWeakPin, randomToken } from "../lib/crypto.js";
+import { canteenTxView } from "./canteen-employee.js";
 import { amount, parse, phone, pin } from "../lib/validate.js";
 import { audit } from "../services/auth.js";
-import { employeeAccount, houseTransfer, minBalanceFor, orgAccount, requireRole, upsertMember } from "../services/canteen.js";
+import { employeeAccount, houseTransfer, minBalanceFor, notifyEmployee, orgAccount, pay, purchaseReceipt, requireRole, upsertMember } from "../services/canteen.js";
 
 const satang = z.number().int().min(0).max(100_000_000);
 const dateStr = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 /** Bangkok-day range helper: [from 00:00, to+1 00:00). */
+const notRefunded = (alias: string) => `NOT EXISTS (SELECT 1 FROM transactions rf WHERE rf.refund_of = ${alias}.id)`;
 const range = `created_at >= ($2::date)::timestamp AT TIME ZONE 'Asia/Bangkok' AND created_at < ($3::date + 1)::timestamp AT TIME ZONE 'Asia/Bangkok'`;
 
 export default async function canteenHrRoutes(app: FastifyInstance, ctx: AppCtx) {
@@ -49,7 +51,7 @@ export default async function canteenHrRoutes(app: FastifyInstance, ctx: AppCtx)
     const m = await requireRole(ctx, req, "hr");
     const q = parse(z.object({ q: z.string().max(60).optional(), status: z.enum(["active", "inactive", "all"]).default("all") }), req.query);
     const r = await ctx.db.query(
-      `SELECT m.id, m.user_id, m.employee_code, m.department, m.status, u.display_name, u.phone,
+      `SELECT m.id, m.user_id, m.employee_code, m.department, m.status, m.offboarded_at, u.display_name, u.phone,
               (u.pin_hash IS NOT NULL) AS activated, (u.line_user_id IS NOT NULL) AS line_linked, a.balance, a.min_balance
        FROM org_members m JOIN users u ON u.id = m.user_id
        JOIN accounts a ON a.org_id = m.org_id AND a.user_id = m.user_id AND a.kind = 'employee'
@@ -66,6 +68,7 @@ export default async function canteenHrRoutes(app: FastifyInstance, ctx: AppCtx)
       department: e.department,
       phone: e.phone,
       status: e.status,
+      offboarded: !!e.offboarded_at,
       activated: e.activated,
       lineLinked: e.line_linked,
       balance: e.balance,
@@ -120,7 +123,7 @@ export default async function canteenHrRoutes(app: FastifyInstance, ctx: AppCtx)
     const p = parse(z.object({ id: z.string().uuid() }), req.params);
     const b = parse(z.object({ status: z.enum(["active", "inactive"]).optional(), department: z.string().max(60).optional() }), req.body);
     const r = await ctx.db.query(
-      "UPDATE org_members SET status = COALESCE($3, status), department = COALESCE($4, department) WHERE id = $1 AND org_id = $2 AND role = 'employee' RETURNING id",
+      "UPDATE org_members SET status = COALESCE($3, status), department = COALESCE($4, department), offboarded_at = CASE WHEN $3 = 'active' THEN NULL ELSE offboarded_at END WHERE id = $1 AND org_id = $2 AND role = 'employee' RETURNING id",
       [p.id, m.orgId, b.status ?? null, b.department ?? null],
     );
     if (!r.rowCount) throw err.notFound("EMPLOYEE_NOT_FOUND", "Employee not found");
@@ -198,6 +201,79 @@ export default async function canteenHrRoutes(app: FastifyInstance, ctx: AppCtx)
     });
   });
 
+  /**
+   * Employee leaves: blocks payments and the badge at once. A negative balance stays and shows up in the
+   * payroll export (final deduction); a positive one is cashed out at the HR desk or returned to welfare.
+   */
+  app.post("/org/employees/:id/offboard", async (req) => {
+    const m = await requireRole(ctx, req, "hr");
+    const p = parse(z.object({ id: z.string().uuid() }), req.params);
+    const b = parse(z.object({ leftover: z.enum(["cash_out", "forfeit"]) }), req.body);
+    return withTx(ctx.db, async (tx) => {
+      const e = await tx.query(
+        `SELECT m.user_id, m.offboarded_at, u.display_name, m.employee_code FROM org_members m JOIN users u ON u.id = m.user_id
+         WHERE m.id = $1 AND m.org_id = $2 AND m.role = 'employee' FOR UPDATE OF m`,
+        [p.id, m.orgId],
+      );
+      if (!e.rowCount) throw err.notFound("EMPLOYEE_NOT_FOUND", "Employee not found");
+      if (e.rows[0].offboarded_at) throw err.conflict("ALREADY_OFFBOARDED", "Employee was already offboarded");
+      await tx.query("UPDATE org_members SET status = 'inactive', offboarded_at = now(), badge_token = $2 WHERE id = $1", [p.id, randomToken(18)]);
+      const acc = await employeeAccount(tx, m.orgId, e.rows[0].user_id, true);
+      let moved = 0;
+      if (acc.balance > 0) {
+        moved = acc.balance;
+        await houseTransfer(tx, {
+          type: "offboard",
+          orgId: m.orgId,
+          from: acc.id,
+          to: await orgAccount(tx, m.orgId, b.leftover === "cash_out" ? "org_settlement" : "org_welfare"),
+          amount: moved,
+          by: req.user!.id,
+          counterparty: {
+            from: { kind: "employee", name: e.rows[0].display_name, ref: e.rows[0].employee_code ?? "" },
+            to: { kind: "hr", name: b.leftover === "cash_out" ? "รับเงินสดคืนที่ฝ่ายบุคคล" : "คืนสวัสดิการเมื่อลาออก", ref: "" },
+          },
+        });
+      }
+      const finalDeduct = acc.balance < 0 ? -acc.balance : 0;
+      await audit(tx, req.user!.id, "org.employee_offboard", req.ip, { memberId: p.id, leftover: b.leftover, moved, finalDeduct });
+      return { moved, leftover: b.leftover, finalDeduct };
+    });
+  });
+
+  /**
+   * Back-entry of paper slips written while the system was down (see RUNBOOK). No PIN — the slip
+   * signed by the employee is the evidence, so the slip number goes in the note. Daily limit isn't
+   * applied (it couldn't be at the time); the credit floor still is.
+   */
+  app.post("/org/manual-purchases", async (req) => {
+    const m = await requireRole(ctx, req, "hr");
+    const b = parse(
+      z.object({ memberId: z.string().uuid(), merchantId: z.string().uuid(), amount, note: z.string().trim().min(1).max(100), idempotencyKey: z.string().min(8).max(80) }),
+      req.body,
+    );
+    const e = await ctx.db.query("SELECT user_id FROM org_members WHERE id = $1 AND org_id = $2 AND role = 'employee'", [b.memberId, m.orgId]);
+    if (!e.rowCount) throw err.notFound("EMPLOYEE_NOT_FOUND", "Employee not found");
+    const userId = e.rows[0].user_id;
+    const t = await withTx(ctx.db, async (tx) => {
+      const t = await pay(ctx, tx, {
+        userId,
+        orgId: m.orgId,
+        merchantId: b.merchantId,
+        amount: b.amount,
+        idempotencyKey: `manual:${b.idempotencyKey}`,
+        channel: "manual",
+        skipDailyLimit: true,
+        note: `บันทึกย้อนหลัง: ${b.note}`,
+        ip: req.ip,
+      });
+      if (!t.replay) await audit(tx, req.user!.id, "org.manual_purchase", req.ip, { txId: t.id, memberId: b.memberId, amount: b.amount, note: b.note });
+      return t;
+    });
+    if (!t.replay) notifyEmployee(ctx, m.orgId, userId, (av) => `${purchaseReceipt(t)(av)}\n(ฝ่ายบุคคลบันทึกจากใบจดตอนระบบขัดข้อง · ${b.note})`);
+    return canteenTxView(t, -t.amount);
+  });
+
   /** Credit every active employee with the org's welfare amount for a cycle — once per cycle. */
   app.post("/org/welfare/run", async (req) => {
     const m = await requireRole(ctx, req, "hr");
@@ -246,7 +322,7 @@ export default async function canteenHrRoutes(app: FastifyInstance, ctx: AppCtx)
   app.get("/org/payroll", async (req) => {
     const m = await requireRole(ctx, req, "hr");
     const r = await ctx.db.query(
-      `SELECT m.id, m.employee_code, m.department, u.display_name, -a.balance AS deduct
+      `SELECT m.id, m.employee_code, m.department, u.display_name, -a.balance AS deduct, (m.offboarded_at IS NOT NULL) AS offboarded
        FROM org_members m JOIN users u ON u.id = m.user_id
        JOIN accounts a ON a.org_id = m.org_id AND a.user_id = m.user_id AND a.kind = 'employee'
        WHERE m.org_id = $1 AND m.role = 'employee' AND a.balance < 0 ORDER BY m.employee_code`,
@@ -254,7 +330,7 @@ export default async function canteenHrRoutes(app: FastifyInstance, ctx: AppCtx)
     );
     return {
       asOf: new Date().toISOString(),
-      items: r.rows.map((x) => ({ memberId: x.id, code: x.employee_code, name: x.display_name, department: x.department, deduct: x.deduct })),
+      items: r.rows.map((x) => ({ memberId: x.id, code: x.employee_code, name: x.display_name, department: x.department, deduct: x.deduct, offboarded: x.offboarded })),
       total: r.rows.reduce((s, x) => s + x.deduct, 0),
     };
   });
@@ -370,19 +446,19 @@ export default async function canteenHrRoutes(app: FastifyInstance, ctx: AppCtx)
     const [tot, byShop, byDay, outstanding] = await Promise.all([
       ctx.db.query(
         `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount),0)::bigint AS total, COUNT(DISTINCT initiated_by)::int AS buyers
-         FROM transactions WHERE org_id = $1 AND type = 'purchase' AND status = 'completed' AND ${range}`,
+         FROM transactions t WHERE org_id = $1 AND type = 'purchase' AND status = 'completed' AND ${range} AND ${notRefunded("t")}`,
         args,
       ),
       ctx.db.query(
         `SELECT me.id, me.name, COUNT(t.id)::int AS count, COALESCE(SUM(t.amount),0)::bigint AS total
          FROM merchants me LEFT JOIN transactions t ON t.merchant_id = me.id AND t.type = 'purchase' AND t.status = 'completed'
-           AND t.created_at >= ($2::date)::timestamp AT TIME ZONE 'Asia/Bangkok' AND t.created_at < ($3::date + 1)::timestamp AT TIME ZONE 'Asia/Bangkok'
+           AND t.created_at >= ($2::date)::timestamp AT TIME ZONE 'Asia/Bangkok' AND t.created_at < ($3::date + 1)::timestamp AT TIME ZONE 'Asia/Bangkok' AND ${notRefunded("t")}
          WHERE me.org_id = $1 GROUP BY me.id, me.name ORDER BY total DESC`,
         args,
       ),
       ctx.db.query(
         `SELECT to_char(created_at AT TIME ZONE 'Asia/Bangkok', 'YYYY-MM-DD') AS day, COUNT(*)::int AS count, SUM(amount)::bigint AS total
-         FROM transactions WHERE org_id = $1 AND type = 'purchase' AND status = 'completed' AND ${range} GROUP BY 1 ORDER BY 1`,
+         FROM transactions t WHERE org_id = $1 AND type = 'purchase' AND status = 'completed' AND ${range} AND ${notRefunded("t")} GROUP BY 1 ORDER BY 1`,
         args,
       ),
       ctx.db.query(
@@ -400,8 +476,9 @@ export default async function canteenHrRoutes(app: FastifyInstance, ctx: AppCtx)
     const m = await requireRole(ctx, req, "hr");
     const q = parse(z.object({ from: dateStr, to: dateStr }), req.query);
     const r = await ctx.db.query(
-      `SELECT t.id, t.type, t.amount, t.channel, t.created_at, t.counterparty->'from'->>'name' AS employee,
-              t.counterparty->'from'->>'ref' AS employee_code, me.name AS shop
+      `SELECT t.id, t.type, t.amount, t.channel, t.created_at, t.note,
+              t.counterparty->(CASE WHEN t.type = 'refund' THEN 'to' ELSE 'from' END)->>'name' AS employee,
+              t.counterparty->(CASE WHEN t.type = 'refund' THEN 'to' ELSE 'from' END)->>'ref' AS employee_code, me.name AS shop
        FROM transactions t LEFT JOIN merchants me ON me.id = t.merchant_id
        WHERE t.org_id = $1 AND t.status = 'completed' AND ${range.replaceAll("created_at", "t.created_at")}
        ORDER BY t.created_at DESC LIMIT 20000`,

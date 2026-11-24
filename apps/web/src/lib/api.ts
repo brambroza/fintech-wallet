@@ -140,7 +140,10 @@ export type Tx = {
   channel: string | null;
   note: string | null;
   createdAt: string;
+  /** Shop list only: this purchase was refunded. */
+  refunded?: boolean;
 };
+export type QuickAmount = { label: string; amount: number };
 export type Org = { id: string; name: string; code: string; moneyMode: 'credit' | 'prepaid'; creditLimit: number; dailyLimit: number; welfareAmount: number };
 export type Employee = {
   id: string;
@@ -150,6 +153,7 @@ export type Employee = {
   department: string | null;
   phone: string | null;
   status: 'active' | 'inactive';
+  offboarded: boolean;
   activated: boolean;
   lineLinked: boolean;
   balance: number;
@@ -165,7 +169,7 @@ export type Summary = {
   toDeduct: number;
   shopsPayable: number;
 };
-export type PayrollItem = { memberId: string; code: string | null; name: string; department: string | null; deduct: number };
+export type PayrollItem = { memberId: string; code: string | null; name: string; department: string | null; deduct: number; offboarded: boolean };
 
 // ---------- endpoints ----------
 const dev = () => deviceId();
@@ -188,7 +192,10 @@ export const api = {
   myTx: (cursor?: number | null) => call<{ items: Tx[]; nextCursor: number | null }>('GET', `/canteen/transactions${cursor ? `?cursor=${cursor}` : ''}`),
 
   // shop
-  shop: () => call<{ id: string; name: string; orgName: string; staticQr: string; payable: number; today: { count: number; total: number } }>('GET', '/shop'),
+  shop: () =>
+    call<{ id: string; name: string; orgName: string; staticQr: string; payable: number; today: { count: number; total: number }; quickAmounts: QuickAmount[] }>('GET', '/shop'),
+  setQuickAmounts: (items: QuickAmount[]) => call<{ quickAmounts: QuickAmount[] }>('PUT', '/shop/quick-amounts', { items }),
+  refund: (txId: string, reason?: string) => call<Tx>('POST', `/shop/transactions/${txId}/refund`, { reason: reason || undefined }),
   createCharge: (amount: number) => call<{ chargeId: string; amount: number; expiresAt: string; qr: string }>('POST', '/shop/charges', { amount }),
   charge: (id: string) => call<{ id: string; amount: number; status: 'open' | 'paid' | 'cancelled' | 'expired'; payer: string | null }>('GET', `/shop/charges/${id}`),
   cancelCharge: (id: string) => call<{ ok: true }>('POST', `/shop/charges/${id}/cancel`),
@@ -207,6 +214,10 @@ export const api = {
   setEmployeePin:(id: string, pin: string) => call<{ ok: true }>('POST', `/org/employees/${id}/pin`, { pin }),
   topupEmployee: (id: string, amount: number, idempotencyKey: string, note?: string) =>
     call<{ id: string }>('POST', `/org/employees/${id}/topup`, { amount, idempotencyKey, note }),
+  offboard: (id: string, leftover: 'cash_out' | 'forfeit') =>
+    call<{ moved: number; leftover: 'cash_out' | 'forfeit'; finalDeduct: number }>('POST', `/org/employees/${id}/offboard`, { leftover }),
+  manualPurchase: (b: { memberId: string; merchantId: string; amount: number; note: string; idempotencyKey: string }) =>
+    call<Tx>('POST', '/org/manual-purchases', b),
   welfareRun: (cycle: string) => call<{ cycle: string; employees: number; amountEach: number; total: number }>('POST', '/org/welfare/run', { cycle }),
   welfareRuns: () => call<{ cycle: string; amount: number; employees: number; created_at: string }[]>('GET', '/org/welfare/runs'),
   payroll: () => call<{ asOf: string; items: PayrollItem[]; total: number }>('GET', '/org/payroll'),
@@ -256,6 +267,11 @@ export function errorText(e: unknown): string {
     WELFARE_ZERO: 'ยังไม่ได้ตั้งยอดสวัสดิการต่อคน',
     LINE_TAKEN: 'บัญชี LINE นี้ผูกกับพนักงานคนอื่นแล้ว',
     LINE_TOKEN_INVALID: 'เข้าสู่ระบบด้วย LINE ไม่สำเร็จ',
+    ALREADY_REFUNDED: 'รายการนี้คืนเงินไปแล้ว',
+    REFUND_WINDOW: 'เกิน 24 ชั่วโมงแล้ว ร้านคืนเองไม่ได้ ให้ติดต่อฝ่ายบุคคล',
+    TX_NOT_FOUND: 'ไม่พบรายการ',
+    ALREADY_OFFBOARDED: 'พนักงานคนนี้ทำเรื่องลาออกไปแล้ว',
+    EMPLOYEE_NOT_FOUND: 'ไม่พบพนักงาน',
     VALIDATION: 'ข้อมูลไม่ถูกต้อง',
   };
   return map[e.code] ?? 'เกิดข้อผิดพลาด ลองใหม่อีกครั้ง';

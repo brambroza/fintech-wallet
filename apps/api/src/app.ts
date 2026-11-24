@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
@@ -29,7 +30,22 @@ export async function buildApp(ctx: AppCtx) {
 
   await app.register(helmet);
   await app.register(cors, { origin: ctx.cfg.CORS_ORIGIN === "*" ? true : ctx.cfg.CORS_ORIGIN.split(",") });
-  await app.register(rateLimit, { max: 120, timeWindow: "1 minute" });
+  // Limits are per session/device, not per IP: a whole factory shares one public IP behind its NAT,
+  // so per-IP limits would lock out hundreds of employees at lunchtime. Brute force on PIN/OTP is
+  // stopped by the per-user PIN lockout and per-OTP attempt limits instead.
+  await app.register(rateLimit, {
+    max: 120,
+    timeWindow: "1 minute",
+    hook: "preHandler",
+    keyGenerator: (req) => {
+      const auth = req.headers.authorization;
+      if (auth) return `t:${createHash("sha256").update(auth).digest("base64url").slice(0, 32)}`;
+      const body = (req.body ?? {}) as { deviceId?: unknown; phone?: unknown };
+      if (typeof body.deviceId === "string" && body.deviceId) return `d:${body.deviceId.slice(0, 80)}`;
+      if (typeof body.phone === "string" && body.phone) return `p:${body.phone.slice(0, 20)}`;
+      return `ip:${req.ip}`;
+    },
+  });
 
   app.setErrorHandler((e, req, reply) => {
     if (e instanceof AppError) {

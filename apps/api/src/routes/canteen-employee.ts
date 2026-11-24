@@ -5,7 +5,7 @@ import { withTx } from "../db.js";
 import { err } from "../lib/errors.js";
 import { amount, parse, pin } from "../lib/validate.js";
 import { authenticate, checkPin } from "../services/auth.js";
-import { employeeAccount, parseQr, pay, requireRole } from "../services/canteen.js";
+import { employeeAccount, notifyEmployee, parseQr, pay, purchaseReceipt, requireRole } from "../services/canteen.js";
 
 export function canteenTxView(row: Record<string, any>, delta: number) {
   const cp = row.counterparty ?? {};
@@ -42,7 +42,8 @@ export default async function canteenEmployeeRoutes(app: FastifyInstance, ctx: A
       const acc = await employeeAccount(ctx.db, emp.org_id, userId);
       const o = await ctx.db.query("SELECT daily_limit, welfare_amount FROM orgs WHERE id = $1", [emp.org_id]);
       const spent = await ctx.db.query(
-        `SELECT COALESCE(SUM(amount), 0)::bigint AS v FROM transactions WHERE initiated_by = $1 AND org_id = $2 AND type = 'purchase'
+        `SELECT COALESCE(SUM(amount), 0)::bigint AS v FROM transactions t WHERE initiated_by = $1 AND org_id = $2 AND type = 'purchase'
+         AND NOT EXISTS (SELECT 1 FROM transactions r WHERE r.refund_of = t.id)
          AND status = 'completed' AND created_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Bangkok') AT TIME ZONE 'Asia/Bangkok'`,
         [userId, emp.org_id],
       );
@@ -108,6 +109,7 @@ export default async function canteenEmployeeRoutes(app: FastifyInstance, ctx: A
     const t = await withTx(ctx.db, (tx) =>
       pay(ctx, tx, { userId: req.user!.id, orgId: m.orgId, merchantId: b.merchantId, chargeId: b.chargeId, amount: b.amount, idempotencyKey: b.idempotencyKey, channel: b.channel, ip: req.ip }),
     );
+    if (!t.replay) notifyEmployee(ctx, m.orgId, req.user!.id, purchaseReceipt(t));
     return canteenTxView(t, -t.amount);
   });
 

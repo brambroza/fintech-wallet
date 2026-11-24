@@ -11,6 +11,7 @@ solar:check-circle-bold
 solar:check-circle-linear
 solar:danger-bold
 solar:danger-triangle-bold
+solar:document-add-linear
 solar:double-alt-arrow-up-bold-duotone
 solar:download-linear
 solar:forbidden-circle-linear
@@ -21,6 +22,7 @@ solar:info-circle-bold
 solar:lock-password-linear
 solar:logout-2-linear
 solar:magnifer-linear
+solar:pen-bold
 solar:printer-linear
 solar:qr-code-bold
 solar:qr-code-linear
@@ -29,6 +31,7 @@ solar:restart-bold
 solar:restart-linear
 solar:settings-bold-duotone
 solar:shop-bold-duotone
+solar:trash-bin-trash-bold
 solar:upload-linear
 solar:users-group-rounded-bold-duotone
 solar:wallet-linear

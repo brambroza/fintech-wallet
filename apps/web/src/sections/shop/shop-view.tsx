@@ -9,13 +9,18 @@ import List from '@mui/material/List';
 import Alert from '@mui/material/Alert';
 import Stack from '@mui/material/Stack';
 import Button from '@mui/material/Button';
+import Dialog from '@mui/material/Dialog';
 import ListItem from '@mui/material/ListItem';
+import IconButton from '@mui/material/IconButton';
+import DialogTitle from '@mui/material/DialogTitle';
+import DialogActions from '@mui/material/DialogActions';
+import DialogContent from '@mui/material/DialogContent';
 import TextField from '@mui/material/TextField';
 import Typography from '@mui/material/Typography';
 import ListItemText from '@mui/material/ListItemText';
 
 import { useAuth } from 'src/lib/auth';
-import { api, baht, newKey, type Tx, ApiError, toSatang, errorText } from 'src/lib/api';
+import { api, baht, newKey, type Tx, ApiError, toSatang, errorText, type QuickAmount } from 'src/lib/api';
 
 import { Logo } from 'src/components/logo';
 import { Iconify } from 'src/components/iconify';
@@ -72,7 +77,7 @@ function Paid({ amount, payer, onNext }: { amount: number; payer?: string | null
 }
 
 // ---------- mode 1: shop shows a one-time QR, employee scans it ----------
-function ChargeMode({ onPaid }: { onPaid: () => void }) {
+function ChargeMode({ onPaid, quick, onEditQuick }: { onPaid: () => void; quick: QuickAmount[]; onEditQuick: () => void }) {
   const [value, setValue] = useState('');
   const [charge, setCharge] = useState<{ chargeId: string; qr: string; amount: number; expiresAt: string } | null>(null);
   const [status, setStatus] = useState<{ status: string; payer: string | null } | null>(null);
@@ -86,10 +91,10 @@ function ChargeMode({ onPaid }: { onPaid: () => void }) {
     setError(null);
   }, []);
 
-  const create = async () => {
+  const create = async (amount = toSatang(value)!) => {
     setError(null);
     try {
-      const c = await api.createCharge(toSatang(value)!);
+      const c = await api.createCharge(amount);
       setLeft(Math.max(0, Math.round((new Date(c.expiresAt).getTime() - Date.now()) / 1000)));
       setCharge(c);
     } catch (e) {
@@ -138,7 +143,7 @@ function ChargeMode({ onPaid }: { onPaid: () => void }) {
             ยกเลิก
           </Button>
           {expired && (
-            <Button variant="contained" onClick={create}>
+            <Button variant="contained" onClick={() => create(charge.amount)}>
               สร้าง QR ใหม่
             </Button>
           )}
@@ -150,7 +155,22 @@ function ChargeMode({ onPaid }: { onPaid: () => void }) {
   return (
     <Stack spacing={2}>
       {error && <Alert severity="error">{error}</Alert>}
-      <AmountEntry value={value} onChange={setValue} onNext={create} label="แสดง QR รับเงิน" />
+      {quick.length > 0 && (
+        <Box sx={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: 1 }}>
+          {quick.map((q) => (
+            <Button key={`${q.label}-${q.amount}`} variant="outlined" color="inherit" onClick={() => create(q.amount)} sx={{ py: 1.5, flexDirection: 'column', lineHeight: 1.3 }}>
+              <Typography variant="subtitle1" noWrap sx={{ maxWidth: 1 }}>
+                {q.label}
+              </Typography>
+              <Typography variant="h6">{baht(q.amount)}</Typography>
+            </Button>
+          ))}
+        </Box>
+      )}
+      <AmountEntry value={value} onChange={setValue} onNext={() => create()} label="แสดง QR รับเงิน" />
+      <Button size="small" color="inherit" onClick={onEditQuick} startIcon={<Iconify icon="solar:pen-bold" />}>
+        {quick.length ? 'แก้ปุ่มราคาด่วน' : 'ตั้งปุ่มราคาด่วน เช่น ข้าว 1 อย่าง 35 บาท'}
+      </Button>
     </Stack>
   );
 }
@@ -252,6 +272,183 @@ function BadgeMode({ onPaid }: { onPaid: () => void }) {
   );
 }
 
+
+// ---------- preset price buttons ----------
+function QuickEditor({ open, items, onClose, onSaved }: { open: boolean; items: QuickAmount[]; onClose: () => void; onSaved: () => void }) {
+  const [rows, setRows] = useState<{ label: string; price: string }[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (open) {
+      setRows(items.length ? items.map((i) => ({ label: i.label, price: String(i.amount / 100) })) : [{ label: '', price: '' }]);
+      setError(null);
+    }
+  }, [open, items]);
+
+  const filled = rows.filter((r) => r.label.trim() || r.price.trim());
+  const valid = filled.every((r) => r.label.trim() && toSatang(r.price));
+  const save = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await api.setQuickAmounts(filled.map((r) => ({ label: r.label.trim(), amount: toSatang(r.price)! })));
+      onSaved();
+      onClose();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onClose={onClose} fullWidth maxWidth="xs">
+      <DialogTitle>ปุ่มราคาด่วน</DialogTitle>
+      <DialogContent>
+        <Stack spacing={1.5} sx={{ pt: 1 }}>
+          {error && <Alert severity="error">{error}</Alert>}
+          {rows.map((r, i) => (
+            <Stack key={i} direction="row" spacing={1} alignItems="center">
+              <TextField
+                size="small"
+                label="ชื่อปุ่ม"
+                value={r.label}
+                inputProps={{ maxLength: 30 }}
+                onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))}
+                sx={{ flex: 2 }}
+              />
+              <TextField
+                size="small"
+                label="ราคา (บาท)"
+                value={r.price}
+                inputProps={{ inputMode: 'decimal' }}
+                error={!!r.price && !toSatang(r.price)}
+                onChange={(e) => setRows(rows.map((x, j) => (j === i ? { ...x, price: e.target.value } : x)))}
+                sx={{ flex: 1 }}
+              />
+              <IconButton aria-label="ลบปุ่ม" onClick={() => setRows(rows.filter((_, j) => j !== i))}>
+                <Iconify icon="solar:trash-bin-trash-bold" />
+              </IconButton>
+            </Stack>
+          ))}
+          {rows.length < 12 && (
+            <Button color="inherit" startIcon={<Iconify icon="mingcute:add-line" />} onClick={() => setRows([...rows, { label: '', price: '' }])}>
+              เพิ่มปุ่ม
+            </Button>
+          )}
+        </Stack>
+      </DialogContent>
+      <DialogActions>
+        <Button color="inherit" onClick={onClose}>
+          ยกเลิก
+        </Button>
+        <Button variant="contained" disabled={!valid || busy} onClick={save}>
+          บันทึก
+        </Button>
+      </DialogActions>
+    </Dialog>
+  );
+}
+
+// ---------- today's list + refund ----------
+const CHANNEL: Record<string, string> = { badge: 'บัตร', liff: 'LINE', app: 'แอป', manual: 'บันทึกย้อนหลัง' };
+const REFUND_HOURS = 24;
+
+function TodayList({ items, onChanged }: { items: Tx[]; onChanged: () => void }) {
+  const [target, setTarget] = useState<Tx | null>(null);
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const doRefund = async () => {
+    if (!target) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api.refund(target.id, reason.trim());
+      setTarget(null);
+      onChanged();
+    } catch (e) {
+      setError(errorText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const label = (t: Tx) => {
+    if (t.type === 'merchant_payout') return 'บริษัทจ่ายเงินร้าน';
+    if (t.type === 'refund') return `คืนเงิน · ${t.counterparty?.name ?? ''}`;
+    return t.counterparty?.name ?? '';
+  };
+  const canRefund = (t: Tx) => t.type === 'purchase' && !t.refunded && Date.now() - new Date(t.createdAt).getTime() < REFUND_HOURS * 3600_000;
+
+  return (
+    <>
+      <List disablePadding>
+        {items.map((t) => (
+          <ListItem
+            key={t.id}
+            divider
+            disableGutters
+            secondaryAction={
+              canRefund(t) ? (
+                <Button
+                  size="small"
+                  color="inherit"
+                  onClick={() => {
+                    setTarget(t);
+                    setReason('');
+                    setError(null);
+                  }}
+                >
+                  คืนเงิน
+                </Button>
+              ) : undefined
+            }
+            sx={{ pr: canRefund(t) ? 9 : 0 }}
+          >
+            <ListItemText
+              primary={label(t)}
+              secondary={`${new Date(t.createdAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}${t.channel ? ` · ${CHANNEL[t.channel] ?? ''}` : ''}${t.refunded ? ' · คืนเงินแล้ว' : ''}`}
+            />
+            <Typography
+              variant="subtitle1"
+              sx={{ color: t.delta < 0 || t.refunded ? 'text.secondary' : 'text.primary', textDecoration: t.refunded ? 'line-through' : 'none', ml: 1 }}
+            >
+              {baht(t.delta, true)}
+            </Typography>
+          </ListItem>
+        ))}
+        {!items.length && (
+          <Typography variant="body2" sx={{ color: 'text.secondary', py: 4, textAlign: 'center' }}>
+            ยังไม่มีรายการวันนี้
+          </Typography>
+        )}
+      </List>
+      <Dialog open={!!target} onClose={() => setTarget(null)} fullWidth maxWidth="xs">
+        <DialogTitle>คืนเงิน {target ? baht(target.amount) : ''}</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 1 }}>
+            <Typography variant="body2">
+              คืนเงินเต็มจำนวนให้ <b>{target?.counterparty?.name}</b> ยอดจะกลับเข้าบัญชีพนักงานทันที และหักออกจากยอดที่บริษัทค้างจ่ายร้าน ทำแล้วยกเลิกไม่ได้
+            </Typography>
+            {error && <Alert severity="error">{error}</Alert>}
+            <TextField label="เหตุผล (ไม่บังคับ)" placeholder="เช่น กดยอดผิด" value={reason} onChange={(e) => setReason(e.target.value)} inputProps={{ maxLength: 100 }} />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button color="inherit" onClick={() => setTarget(null)}>
+            ไม่คืน
+          </Button>
+          <Button variant="contained" color="error" disabled={busy} onClick={doRefund}>
+            ยืนยันคืนเงิน
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </>
+  );
+}
+
 // ----------------------------------------------------------------------
 
 export function ShopView() {
@@ -259,6 +456,7 @@ export function ShopView() {
   const [info, setInfo] = useState<ShopInfo | null>(null);
   const [tab, setTab] = useState<'qr' | 'badge' | 'today'>('qr');
   const [today, setToday] = useState<Tx[]>([]);
+  const [editQuick, setEditQuick] = useState(false);
 
   const load = useCallback(() => {
     api.shop().then(setInfo).catch(() => {});
@@ -289,7 +487,7 @@ export function ShopView() {
           <Tab value="today" label="ยอดวันนี้" />
         </Tabs>
         <Card sx={{ p: { xs: 2, sm: 3 } }}>
-          {tab === 'qr' && <ChargeMode onPaid={load} />}
+          {tab === 'qr' && <ChargeMode onPaid={load} quick={info?.quickAmounts ?? []} onEditQuick={() => setEditQuick(true)} />}
           {tab === 'badge' && <BadgeMode onPaid={load} />}
           {tab === 'today' && (
             <Stack spacing={2}>
@@ -299,24 +497,7 @@ export function ShopView() {
                   บริษัทค้างจ่ายร้าน {info ? baht(info.payable) : ''}
                 </Typography>
               </Stack>
-              <List disablePadding>
-                {today.map((t) => (
-                  <ListItem key={t.id} divider disableGutters>
-                    <ListItemText
-                      primary={t.counterparty?.name ?? (t.type === 'merchant_payout' ? 'บริษัทจ่ายเงินร้าน' : '')}
-                      secondary={`${new Date(t.createdAt).toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })} · ${t.channel === 'badge' ? 'บัตร' : t.channel === 'liff' ? 'LINE' : t.channel === 'app' ? 'แอป' : ''}`}
-                    />
-                    <Typography variant="subtitle1" sx={{ color: t.delta < 0 ? 'text.secondary' : 'text.primary' }}>
-                      {baht(t.delta, true)}
-                    </Typography>
-                  </ListItem>
-                ))}
-                {!today.length && (
-                  <Typography variant="body2" sx={{ color: 'text.secondary', py: 4, textAlign: 'center' }}>
-                    ยังไม่มีรายการวันนี้
-                  </Typography>
-                )}
-              </List>
+              <TodayList items={today} onChanged={load} />
               {info && (
                 <Stack alignItems="center" spacing={1} sx={{ pt: 2, borderTop: 1, borderColor: 'divider' }}>
                   <Typography variant="subtitle2">QR ประจำร้าน (พนักงานกรอกยอดเอง)</Typography>
@@ -330,6 +511,7 @@ export function ShopView() {
           )}
         </Card>
       </Box>
+      <QuickEditor open={editQuick} items={info?.quickAmounts ?? []} onClose={() => setEditQuick(false)} onSaved={load} />
     </Box>
   );
 }

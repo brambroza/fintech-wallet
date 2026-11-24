@@ -30,6 +30,7 @@ const TYPE_LABEL: Record<string, string> = {
   payroll_settle: 'หักเงินเดือนแล้ว',
   topup: 'เติมเงิน',
   refund: 'คืนเงิน',
+  offboard: 'ปิดบัญชี (ลาออก)',
 };
 
 /**
@@ -235,7 +236,7 @@ export function EmployeeApp({ channel, scan }: { channel: 'liff' | 'app'; scan?:
           {history.map((t) => (
             <ListItem key={t.id} divider>
               <ListItemText
-                primary={t.type === 'purchase' ? (t.counterparty?.name ?? 'ร้านค้า') : TYPE_LABEL[t.type] ?? t.type}
+                primary={t.type === 'purchase' ? (t.counterparty?.name ?? 'ร้านค้า') : t.type === 'refund' ? `คืนเงิน · ${t.counterparty?.name ?? ''}` : TYPE_LABEL[t.type] ?? t.type}
                 secondary={new Date(t.createdAt).toLocaleString('th-TH', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
               />
               <Typography variant="subtitle1" sx={{ color: t.delta > 0 ? 'success.main' : 'text.primary' }}>

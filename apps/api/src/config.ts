@@ -22,6 +22,10 @@ const schema = z.object({
   ADMIN_TOKEN: z.string().min(24).optional(),
   /** LINE Login channel id; required to verify LIFF id tokens outside the sandbox. */
   LINE_CHANNEL_ID: z.string().optional(),
+  /** LINE Messaging API channel access token: payment receipts pushed to the employee's LINE. Unset = no push. */
+  LINE_MESSAGING_TOKEN: z.string().optional(),
+  /** How long after a purchase the shop may still refund it. */
+  REFUND_WINDOW_HOURS: z.coerce.number().int().positive().default(24),
   /** Charge QR lifetime. */
   CHARGE_TTL_SEC: z.coerce.number().int().positive().default(180),
   /** Consumer P2P wallet routes from the first MVP (self-register, KYC, bank payout). Off for the canteen product. */

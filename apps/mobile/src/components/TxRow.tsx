@@ -11,6 +11,7 @@ export const typeLabel: Record<string, string> = {
   payroll_settle: "หักเงินเดือนแล้ว",
   topup: "เติมเงิน",
   refund: "คืนเงิน",
+  offboard: "ปิดบัญชี (ลาออก)",
 };
 
 export function TxRow({ t, dateFn = time }: { t: Txn; dateFn?: (iso: string) => string }) {

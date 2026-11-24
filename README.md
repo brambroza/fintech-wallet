@@ -10,8 +10,8 @@ Design: [canvas](https://claude.ai/artifact/8fxD8Qy5CZp9Eb8QbTtGvq) · Flow: [wh
 | ส่วน | ใช้ทำอะไร | Stack |
 |---|---|---|
 | `apps/api` | API กลาง, ledger, auth | Node 22 · Fastify 5 · PostgreSQL · zod · jose |
-| `apps/web` `/hr` | Back-office ฝ่ายบุคคล: พนักงาน, บัตร QR, สวัสดิการ, หักเงินเดือน, ร้านค้า, รายงาน | React 18 · MUI v5 (goalong-mui-starter) |
-| `apps/web` `/shop` | หน้าร้าน (มือถือ/แท็บเล็ต): QR รับเงิน, สแกนบัตร + PIN, ยอดวันนี้ | เดียวกัน |
+| `apps/web` `/hr` | Back-office ฝ่ายบุคคล: พนักงาน, บัตร QR, สวัสดิการ, หักเงินเดือน, ร้านค้า, รายงาน, ทำเรื่องลาออก, บันทึกใบจดย้อนหลัง | React 18 · MUI v5 (goalong-mui-starter) |
+| `apps/web` `/shop` | หน้าร้าน (มือถือ/แท็บเล็ต): ปุ่มราคาด่วน, QR รับเงิน, สแกนบัตร + PIN, ยอดวันนี้, คืนเงิน | เดียวกัน |
 | `apps/web` `/liff` | พนักงานผ่าน LINE (LIFF): ผูก LINE ครั้งแรก แล้วเข้าได้ทันที | `@line/liff` |
 | `apps/mobile` | แอปพนักงาน: เปิดใช้งาน, สแกนจ่าย, ประวัติ | Expo SDK 58 · expo-camera · SecureStore |
 | `deploy/` + `Jenkinsfile` | Production: Caddy (TLS) + api + web + Postgres 17 + backup รายวัน | Docker · Jenkins |
@@ -50,7 +50,7 @@ Sandbox แสดงรหัส OTP บนหน้าจอ และ LIFF ร
 ```bash
 npm run api:test   # 24 integration tests บน Postgres จริง (TEST_DATABASE_URL, TEST_DATABASE_URL_CANTEEN)
 ```
-ครอบคลุม: activation/OTP/PIN lockout, device binding, refresh rotation, QR จ่ายครั้งเดียว + ยอดต้องตรง, วงเงินต่อวัน, วงเงิน credit/prepaid, บัตร + PIN + ออกบัตรใหม่, สวัสดิการไม่ซ้ำรอบ, หักเงินเดือนไม่ซ้ำ, จ่ายร้าน, รายงาน, LINE link/login, ledger สมดุล, โอนพร้อมกันไม่ติดลบ
+ครอบคลุม: activation/OTP/PIN lockout, device binding, refresh rotation, QR จ่ายครั้งเดียว + ยอดต้องตรง, วงเงินต่อวัน, วงเงิน credit/prepaid, บัตร + PIN + ออกบัตรใหม่, สวัสดิการไม่ซ้ำรอบ, หักเงินเดือนไม่ซ้ำ, จ่ายร้าน, รายงาน, LINE link/login, คืนเงิน + ใบเสร็จทาง LINE, ปุ่มราคาด่วน, บันทึกย้อนหลัง, ลาออก (ยอดค้าง/ยอดเหลือ), rate limit ต่อเครื่องไม่ใช่ต่อ IP, ledger สมดุล, โอนพร้อมกันไม่ติดลบ
 
 ## Production
 
@@ -68,4 +68,4 @@ npm run api:test   # 24 integration tests บน Postgres จริง (TEST_DAT
 
 ## หมายเหตุ
 - Routes ของ wallet แบบโอนเงิน P2P/ธนาคาร (MVP แรก) ยังอยู่ใน API แต่ปิดไว้ (`CONSUMER_WALLET=false`)
-- ยังไม่มี: แจ้งเตือนผ่าน LINE OA เมื่อจ่าย/เติมสวัสดิการ, คืนเงินจากร้าน (refund) ผ่านหน้าจอ, export รายงาน Excel แยกร้าน
+- ยังไม่มี: แจ้งเตือน LINE ตอนเติมสวัสดิการ, HR คืนเงินรายการเกิน 24 ชม., โหมด offline (ใช้ใบจดแทน ดู RUNBOOK §7), export รายงาน Excel แยกร้าน

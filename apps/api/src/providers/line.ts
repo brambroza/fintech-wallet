@@ -25,3 +25,33 @@ export class SandboxLineVerifier implements LineVerifier {
     return m ? { sub: m[1], name: "LINE sandbox" } : null;
   }
 }
+
+/** Sends a text message to a LINE user (receipts, alerts). Failures must never break a payment. */
+export interface LineNotifier {
+  push(lineUserId: string, text: string): Promise<void>;
+}
+
+/**
+ * Messaging API push (https://developers.line.biz/en/reference/messaging-api/#send-push-message).
+ * The Messaging API channel must sit under the same LINE provider as the LINE Login channel,
+ * otherwise the user ids differ. Push messages count against the LINE OA plan's monthly quota.
+ */
+export class LineMessagingNotifier implements LineNotifier {
+  constructor(private accessToken: string) {}
+  async push(lineUserId: string, text: string) {
+    const res = await fetch("https://api.line.me/v2/bot/message/push", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${this.accessToken}` },
+      body: JSON.stringify({ to: lineUserId, messages: [{ type: "text", text }] }),
+    });
+    if (!res.ok) throw new Error(`LINE push failed: ${res.status} ${await res.text()}`);
+  }
+}
+
+export class SandboxLineNotifier implements LineNotifier {
+  public outbox: { to: string; text: string }[] = [];
+  async push(to: string, text: string) {
+    this.outbox.push({ to, text });
+    if (process.env.NODE_ENV !== "test") console.info(`[sandbox line] ${to}: ${text.replace(/\n/g, " | ")}`);
+  }
+}

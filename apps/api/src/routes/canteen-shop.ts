@@ -5,28 +5,32 @@ import { withTx } from "../db.js";
 import { err } from "../lib/errors.js";
 import { amount, parse, pin } from "../lib/validate.js";
 import { checkPin } from "../services/auth.js";
-import { chargeQr, merchantQr, pay, requireRole } from "../services/canteen.js";
+import { baht, bangkokTime, chargeQr, merchantQr, notifyEmployee, pay, purchaseReceipt, refund, requireRole } from "../services/canteen.js";
 import { canteenTxView } from "./canteen-employee.js";
 
 async function myShop(ctx: AppCtx, req: FastifyRequest) {
   const m = await requireRole(ctx, req, "merchant");
   const r = await ctx.db.query(
-    `SELECT me.id, me.name, a.id AS account_id, a.balance FROM merchants me JOIN accounts a ON a.merchant_id = me.id
+    `SELECT me.id, me.name, me.quick_amounts, a.id AS account_id, a.balance FROM merchants me JOIN accounts a ON a.merchant_id = me.id
      WHERE me.owner_id = $1 AND me.org_id = $2 AND me.status = 'active'`,
     [req.user!.id, m.orgId],
   );
   if (!r.rowCount) throw err.forbidden("ROLE_REQUIRED", "No active shop for this account");
-  return { ...m, shop: r.rows[0] as { id: string; name: string; account_id: string; balance: number } };
+  return { ...m, shop: r.rows[0] as { id: string; name: string; quick_amounts: QuickAmount[]; account_id: string; balance: number } };
 }
 
+type QuickAmount = { label: string; amount: number };
+
+/** Today's sales, net of refunds. */
 const today = `created_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Bangkok') AT TIME ZONE 'Asia/Bangkok'`;
 
 export default async function canteenShopRoutes(app: FastifyInstance, ctx: AppCtx) {
   app.get("/shop", async (req) => {
     const m = await myShop(ctx, req);
     const s = await ctx.db.query(
-      `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount),0)::bigint AS total FROM transactions
-       WHERE merchant_id = $1 AND type = 'purchase' AND status = 'completed' AND ${today}`,
+      `SELECT COUNT(*)::int AS count, COALESCE(SUM(amount),0)::bigint AS total FROM transactions t
+       WHERE merchant_id = $1 AND type = 'purchase' AND status = 'completed' AND ${today}
+         AND NOT EXISTS (SELECT 1 FROM transactions r WHERE r.refund_of = t.id)`,
       [m.shop.id],
     );
     return {
@@ -37,7 +41,16 @@ export default async function canteenShopRoutes(app: FastifyInstance, ctx: AppCt
       /** Owed to the shop by the company (paid out by HR at each cycle). */
       payable: m.shop.balance,
       today: s.rows[0],
+      quickAmounts: m.shop.quick_amounts,
     };
+  });
+
+  /** Preset price buttons (one tap → charge QR). */
+  app.put("/shop/quick-amounts", async (req) => {
+    const m = await myShop(ctx, req);
+    const b = parse(z.object({ items: z.array(z.object({ label: z.string().trim().min(1).max(30), amount })).max(12) }), req.body);
+    await ctx.db.query("UPDATE merchants SET quick_amounts = $2 WHERE id = $1", [m.shop.id, JSON.stringify(b.items)]);
+    return { quickAmounts: b.items };
   });
 
   /** Fixed-amount QR for one sale. */
@@ -90,19 +103,38 @@ export default async function canteenShopRoutes(app: FastifyInstance, ctx: AppCt
     const t = await withTx(ctx.db, (tx) =>
       pay(ctx, tx, { userId, orgId: m.orgId, merchantId: m.shop.id, amount: b.amount, idempotencyKey: `badge:${b.idempotencyKey}`, channel: "badge", ip: req.ip }),
     );
+    if (!t.replay) notifyEmployee(ctx, m.orgId, userId, purchaseReceipt(t));
     return canteenTxView(t, t.amount);
+  });
+
+  /** Full refund of one purchase made at this shop (wrong amount, double payment, cancelled order). */
+  app.post("/shop/transactions/:id/refund", { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } }, async (req) => {
+    const m = await myShop(ctx, req);
+    const p = parse(z.object({ id: z.string().uuid() }), req.params);
+    const b = parse(z.object({ reason: z.string().trim().max(100).optional() }), req.body ?? {});
+    const { refund: t, employeeId } = await withTx(ctx.db, (tx) =>
+      refund(ctx, tx, { orgId: m.orgId, merchantId: m.shop.id, purchaseId: p.id, by: req.user!.id, reason: b.reason, ip: req.ip }),
+    );
+    notifyEmployee(
+      ctx,
+      m.orgId,
+      employeeId,
+      (available) => `${m.shop.name} คืนเงิน ${baht(t.amount)} ให้คุณแล้ว\nเวลา ${bangkokTime(t.created_at)}\nยอดที่ใช้ได้ ${baht(available)}`,
+    );
+    return canteenTxView(t, -t.amount);
   });
 
   app.get("/shop/transactions", async (req) => {
     const m = await myShop(ctx, req);
     const q = parse(z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() }), req.query);
     const r = await ctx.db.query(
-      `SELECT * FROM transactions WHERE merchant_id = $1 AND type IN ('purchase','merchant_payout','refund')
+      `SELECT t.*, EXISTS (SELECT 1 FROM transactions r WHERE r.refund_of = t.id) AS refunded
+       FROM transactions t WHERE merchant_id = $1 AND type IN ('purchase','merchant_payout','refund')
        AND created_at >= (COALESCE($2::date, (now() AT TIME ZONE 'Asia/Bangkok')::date))::timestamp AT TIME ZONE 'Asia/Bangkok'
        AND created_at <  (COALESCE($2::date, (now() AT TIME ZONE 'Asia/Bangkok')::date) + 1)::timestamp AT TIME ZONE 'Asia/Bangkok'
        ORDER BY created_at DESC LIMIT 500`,
       [m.shop.id, q.date ?? null],
     );
-    return r.rows.map((row) => canteenTxView(row, row.type === "purchase" ? row.amount : -row.amount));
+    return r.rows.map((row) => ({ ...canteenTxView(row, row.type === "purchase" ? row.amount : -row.amount), refunded: row.refunded }));
   });
 }

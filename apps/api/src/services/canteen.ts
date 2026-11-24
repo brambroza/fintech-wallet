@@ -111,8 +111,11 @@ export type PayInput = {
   amount: number;
   chargeId?: string;
   idempotencyKey: string;
-  channel: "app" | "liff" | "badge";
+  channel: "app" | "liff" | "badge" | "manual";
   ip?: string;
+  /** HR back-entry of paper slips after an outage: the day's limit was not enforceable at the time. */
+  skipDailyLimit?: boolean;
+  note?: string;
 };
 
 /**
@@ -121,7 +124,7 @@ export type PayInput = {
  */
 export async function pay(ctx: AppCtx, tx: Tx, p: PayInput) {
   const dup = await tx.query("SELECT * FROM transactions WHERE initiated_by = $1 AND idempotency_key = $2", [p.userId, p.idempotencyKey]);
-  if (dup.rowCount) return dup.rows[0];
+  if (dup.rowCount) return { ...dup.rows[0], replay: true };
 
   const acc = await employeeAccount(tx, p.orgId, p.userId, true);
   const mem = await tx.query(
@@ -146,13 +149,15 @@ export async function pay(ctx: AppCtx, tx: Tx, p: PayInput) {
     if (ch.amount !== p.amount) throw err.badRequest("AMOUNT_MISMATCH", "Amount does not match the shop's request");
   }
 
+  // Purchases are always made by the employee (initiated_by), so today's spend is theirs; refunded ones don't count.
   const used = await tx.query(
-    `SELECT COALESCE(SUM(amount), 0)::bigint AS used FROM transactions
+    `SELECT COALESCE(SUM(amount), 0)::bigint AS used FROM transactions t
      WHERE initiated_by = $1 AND org_id = $2 AND type = 'purchase' AND status = 'completed'
+       AND NOT EXISTS (SELECT 1 FROM transactions r WHERE r.refund_of = t.id)
        AND created_at >= date_trunc('day', now() AT TIME ZONE 'Asia/Bangkok') AT TIME ZONE 'Asia/Bangkok'`,
     [p.userId, p.orgId],
   );
-  if (used.rows[0].used + p.amount > mem.rows[0].daily_limit) {
+  if (!p.skipDailyLimit && used.rows[0].used + p.amount > mem.rows[0].daily_limit) {
     throw err.badRequest("DAILY_LIMIT", "Daily spending limit exceeded", { limit: mem.rows[0].daily_limit, used: used.rows[0].used });
   }
   if (acc.balance - p.amount < acc.min_balance) {
@@ -160,8 +165,8 @@ export async function pay(ctx: AppCtx, tx: Tx, p: PayInput) {
   }
 
   const t = await tx.query(
-    `INSERT INTO transactions (type, status, amount, from_account, to_account, initiated_by, counterparty, idempotency_key, completed_at, org_id, merchant_id, channel)
-     VALUES ('purchase','completed',$1,$2,$3,$4,$5,$6, now(), $7, $8, $9) RETURNING *`,
+    `INSERT INTO transactions (type, status, amount, from_account, to_account, initiated_by, counterparty, idempotency_key, completed_at, org_id, merchant_id, channel, note)
+     VALUES ('purchase','completed',$1,$2,$3,$4,$5,$6, now(), $7, $8, $9, $10) RETURNING *`,
     [
       p.amount,
       acc.id,
@@ -175,6 +180,7 @@ export async function pay(ctx: AppCtx, tx: Tx, p: PayInput) {
       p.orgId,
       p.merchantId,
       p.channel,
+      p.note ?? null,
     ],
   );
   await postEntries(tx, t.rows[0].id, [
@@ -190,7 +196,7 @@ export async function pay(ctx: AppCtx, tx: Tx, p: PayInput) {
 export async function houseTransfer(
   tx: Tx,
   t: {
-    type: "welfare" | "payroll_settle" | "merchant_payout" | "topup" | "refund";
+    type: "welfare" | "payroll_settle" | "merchant_payout" | "topup" | "refund" | "offboard";
     orgId: string;
     from: string;
     to: string;
@@ -200,16 +206,81 @@ export async function houseTransfer(
     note?: string;
     key?: string;
     merchantId?: string;
+    refundOf?: string;
   },
 ) {
   const r = await tx.query(
-    `INSERT INTO transactions (type, status, amount, from_account, to_account, initiated_by, counterparty, note, idempotency_key, completed_at, org_id, merchant_id)
-     VALUES ($1,'completed',$2,$3,$4,$5,$6,$7,$8, now(), $9, $10) RETURNING *`,
-    [t.type, t.amount, t.from, t.to, t.by, t.counterparty, t.note ?? null, t.key ?? null, t.orgId, t.merchantId ?? null],
+    `INSERT INTO transactions (type, status, amount, from_account, to_account, initiated_by, counterparty, note, idempotency_key, completed_at, org_id, merchant_id, refund_of)
+     VALUES ($1,'completed',$2,$3,$4,$5,$6,$7,$8, now(), $9, $10, $11) RETURNING *`,
+    [t.type, t.amount, t.from, t.to, t.by, t.counterparty, t.note ?? null, t.key ?? null, t.orgId, t.merchantId ?? null, t.refundOf ?? null],
   );
   await postEntries(tx, r.rows[0].id, [
     { accountId: t.from, amount: -t.amount },
     { accountId: t.to, amount: t.amount },
   ]);
   return r.rows[0];
+}
+
+/** "฿1,234.50" */
+export function baht(satang: number) {
+  const sign = satang < 0 ? "-" : "";
+  return `${sign}฿${(Math.abs(satang) / 100).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/**
+ * Pushes a LINE message to the employee if they linked LINE. Runs after the DB commit and never throws:
+ * a LINE outage must not turn a completed payment into an error for the shop.
+ */
+export function notifyEmployee(ctx: AppCtx, orgId: string, userId: string, line: (available: number) => string) {
+  void (async () => {
+    try {
+      const r = await ctx.db.query(
+        `SELECT u.line_user_id, a.balance - a.min_balance AS available FROM users u
+         JOIN accounts a ON a.user_id = u.id AND a.org_id = $2 AND a.kind = 'employee' WHERE u.id = $1`,
+        [userId, orgId],
+      );
+      const row = r.rows[0];
+      if (!row?.line_user_id) return;
+      await ctx.providers.notify.push(row.line_user_id, line(Number(row.available)));
+    } catch (e) {
+      console.warn("[notify] LINE push failed", (e as Error).message);
+    }
+  })();
+}
+
+export function bangkokTime(d: Date | string) {
+  return new Date(d).toLocaleString("th-TH", { timeZone: "Asia/Bangkok", day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
+export function purchaseReceipt(t: { amount: number; created_at: Date | string; counterparty: any }) {
+  return (available: number) =>
+    `จ่าย ${baht(t.amount)} ให้ ${t.counterparty?.to?.name ?? "ร้านค้า"}\nเวลา ${bangkokTime(t.created_at)}\nยอดที่ใช้ได้ ${baht(available)}\nถ้าไม่ได้จ่ายรายการนี้ ติดต่อฝ่ายบุคคลทันที`;
+}
+
+/**
+ * Shop refunds one of its purchases in full, once, within the refund window.
+ * Money moves back from the shop's payable to the employee; today's spend is freed up again.
+ */
+export async function refund(ctx: AppCtx, tx: Tx, r: { orgId: string; merchantId: string; purchaseId: string; by: string; reason?: string; ip?: string }) {
+  const p = await tx.query("SELECT * FROM transactions WHERE id = $1 AND merchant_id = $2 AND org_id = $3 FOR UPDATE", [r.purchaseId, r.merchantId, r.orgId]);
+  const purchase = p.rows[0];
+  if (!purchase || purchase.type !== "purchase" || purchase.status !== "completed") throw err.notFound("TX_NOT_FOUND", "Purchase not found");
+  const done = await tx.query("SELECT 1 FROM transactions WHERE refund_of = $1", [purchase.id]);
+  if (done.rowCount) throw err.conflict("ALREADY_REFUNDED", "This purchase was already refunded");
+  const ageH = (Date.now() - new Date(purchase.created_at).getTime()) / 3_600_000;
+  if (ageH > ctx.cfg.REFUND_WINDOW_HOURS) throw err.conflict("REFUND_WINDOW", "Too late to refund at the shop; ask HR");
+  const t = await houseTransfer(tx, {
+    type: "refund",
+    orgId: r.orgId,
+    from: purchase.to_account,
+    to: purchase.from_account,
+    amount: purchase.amount,
+    by: r.by,
+    counterparty: { from: purchase.counterparty?.to, to: purchase.counterparty?.from },
+    note: r.reason,
+    merchantId: r.merchantId,
+    refundOf: purchase.id,
+  });
+  await audit(tx, r.by, "canteen.refund", r.ip, { txId: t.id, purchaseId: purchase.id, amount: purchase.amount });
+  return { refund: t, employeeId: purchase.initiated_by as string };
 }
