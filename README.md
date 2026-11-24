@@ -1,70 +1,71 @@
-# Fintech Wallet — MVP (sandbox)
+# Canteen Wallet — ระบบชำระเงินโรงอาหารโรงงาน
 
-แอปกระเป๋าเงิน: สมัคร → ยืนยันตัวตน (KYC) → เติมเงิน → โอน (ในแอป / พร้อมเพย์ / ธนาคาร) → ออมเงิน
-Design: [Fintech app UX/UI canvas](https://claude.ai/artifact/8fxD8Qy5CZp9Eb8QbTtGvq) · Flow: [Whiteboard](https://claude.ai/artifact/FTUmGa6u4oZEvtSCZtBUJz)
+พนักงานสแกนจ่ายในโรงอาหารผ่าน **LINE** หรือ **แอป** (คนไม่มีมือถือใช้ **บัตร QR + PIN**) บริษัทตั้งสวัสดิการค่าอาหาร ส่วนที่ใช้เกินหักเงินเดือนอัตโนมัติ HR เห็นยอดทุกวัน ร้านค้าไม่ต้องทอนเงิน
+หลายโรงงานใช้ deployment เดียวกันได้ (multi-tenant) แต่ละโรงงานเลือกรูปแบบเงินได้เอง: **เครดิต + หักเงินเดือน** หรือ **เติมเงินล่วงหน้า**
 
-> **Sandbox เท่านั้น** — SMS, e-KYC และการโอนออกธนาคารเป็น mock ไม่มีเงินจริง
-> การเปิดใช้เงินจริงต้องมีใบอนุญาต e-Money จาก ธปท. หรือทำผ่านธนาคาร/ผู้ให้บริการที่มีใบอนุญาต ดู [Go-live checklist](#go-live-checklist)
+Design: [canvas](https://claude.ai/artifact/8fxD8Qy5CZp9Eb8QbTtGvq) · Flow: [whiteboard](https://claude.ai/artifact/FTUmGa6u4oZEvtSCZtBUJz) · Sales kit: [doc](https://claude.ai/artifact/TtMtRzChWhCKioAe8Jwr52)
 
-## Stack
+## ส่วนประกอบ
 
-| ส่วน | เทคโนโลยี |
-|---|---|
-| `apps/api` | Node.js 22 · Fastify 5 · TypeScript · PostgreSQL (raw SQL + migrations) · zod · jose (JWT) · bcrypt |
-| `apps/mobile` | Expo SDK 58 · React Native 0.88 · Expo Router · SecureStore · LocalAuthentication · ImagePicker |
-| Infra | Docker · docker-compose · GitHub Actions |
+| ส่วน | ใช้ทำอะไร | Stack |
+|---|---|---|
+| `apps/api` | API กลาง, ledger, auth | Node 22 · Fastify 5 · PostgreSQL · zod · jose |
+| `apps/web` `/hr` | Back-office ฝ่ายบุคคล: พนักงาน, บัตร QR, สวัสดิการ, หักเงินเดือน, ร้านค้า, รายงาน | React 18 · MUI v5 (goalong-mui-starter) |
+| `apps/web` `/shop` | หน้าร้าน (มือถือ/แท็บเล็ต): QR รับเงิน, สแกนบัตร + PIN, ยอดวันนี้ | เดียวกัน |
+| `apps/web` `/liff` | พนักงานผ่าน LINE (LIFF): ผูก LINE ครั้งแรก แล้วเข้าได้ทันที | `@line/liff` |
+| `apps/mobile` | แอปพนักงาน: เปิดใช้งาน, สแกนจ่าย, ประวัติ | Expo SDK 58 · expo-camera · SecureStore |
+| `deploy/` + `Jenkinsfile` | Production: Caddy (TLS) + api + web + Postgres 17 + backup รายวัน | Docker · Jenkins |
+
+## Flow เงิน
+
+```
+HR เติมสวัสดิการ (ต่อรอบ)      org_welfare  ──▶ พนักงาน
+พนักงานจ่ายร้าน (QR / บัตร+PIN)   พนักงาน      ──▶ ร้านค้า
+สิ้นเดือน: หักเงินเดือน           org_settlement ──▶ พนักงาน (ยอดติดลบกลับเป็น 0)
+บริษัทจ่ายร้าน                   ร้านค้า        ──▶ org_settlement
+```
+Double-entry ledger, เงินเป็นสตางค์ (BIGINT), พนักงานใช้ได้ถึง `min_balance` (0 = prepaid, −วงเงิน = credit) บังคับด้วย DB constraint
 
 ## Run locally
 
 ```bash
-# 1) API + Postgres
-cp apps/api/.env.example apps/api/.env      # แก้ JWT_SECRET / OTP_PEPPER
-docker compose up -d --build                 # API ที่ http://localhost:4000, migrate อัตโนมัติ
-
-# หรือรันแบบ dev (ต้องมี Postgres อยู่แล้ว)
+# API (ต้องมี Postgres)
+cp apps/api/.env.example apps/api/.env   # SANDBOX=true, SANDBOX_EXPOSE_OTP=true, ตั้ง ADMIN_TOKEN
 npm install && npm run api:dev
 
-# 2) Mobile
-cd apps/mobile && npm install
-# ตั้ง expo.extra.apiUrl ใน app.json เป็น IP เครื่องคุณ เช่น http://192.168.1.10:4000
-npx expo start
+# สร้างโรงงานทดลอง + HR
+curl -X POST localhost:4000/v1/admin/orgs -H "x-admin-token: <ADMIN_TOKEN>" -H 'content-type: application/json' \
+  -d '{"name":"โรงงานทดลอง","code":"DEMO","hr":{"name":"HR","phone":"0811111111"}}'
+
+# Web (HR / shop / LIFF)
+cd apps/web && cp .env.example .env && yarn install && yarn dev   # http://localhost:8081/activate
+
+# Mobile
+cd apps/mobile && npm install && npx expo start   # ตั้ง expo.extra.apiUrl ใน app.json เป็น IP เครื่อง
 ```
-
-Face ID ใช้ใน Expo Go ไม่ได้ ต้องใช้ development build (`npx expo run:ios` / EAS Build)
-
-### Demo ใน sandbox
-- `SANDBOX_EXPOSE_OTP=true` → รหัส OTP แสดงบนหน้าจอ OTP
-- อนุมัติ/ปฏิเสธ KYC: `curl -X POST localhost:4000/v1/sandbox/kyc/decide -H 'content-type: application/json' -d '{"phone":"0812345678","decision":"approved"}'` (หรือ `KYC_AUTO_APPROVE=true`)
-- โอนออกธนาคาร/พร้อมเพย์: เลขลงท้าย `0000` = ไม่พบบัญชี, ลงท้าย `9999` = ธนาคารปฏิเสธ (ทดสอบการคืนเงิน)
+Sandbox แสดงรหัส OTP บนหน้าจอ และ LIFF รับ token รูปแบบ `sandbox:<id>` เมื่อยังไม่ได้ตั้ง `LINE_CHANNEL_ID`
 
 ## Tests
 
 ```bash
-TEST_DATABASE_URL=postgres://postgres@localhost:5432/wallet_test npm run api:test
+npm run api:test   # 24 integration tests บน Postgres จริง (TEST_DATABASE_URL, TEST_DATABASE_URL_CANTEEN)
 ```
-ครอบคลุม: register/OTP/PIN lockout, device binding, refresh-token rotation + reuse detection, KYC gate, idempotency, overdraft, daily limit, payout failure → reversal, goals, ledger balanced, concurrent transfers ไม่ติดลบ
+ครอบคลุม: activation/OTP/PIN lockout, device binding, refresh rotation, QR จ่ายครั้งเดียว + ยอดต้องตรง, วงเงินต่อวัน, วงเงิน credit/prepaid, บัตร + PIN + ออกบัตรใหม่, สวัสดิการไม่ซ้ำรอบ, หักเงินเดือนไม่ซ้ำ, จ่ายร้าน, รายงาน, LINE link/login, ledger สมดุล, โอนพร้อมกันไม่ติดลบ
 
-## Design decisions
+## Production
 
-- **เงินเป็น integer สตางค์ (BIGINT)** ทุกที่ ไม่มี float
-- **Double-entry ledger**: ทุกรายการมี `ledger_entries` ที่รวมกันได้ 0 ส่วน `accounts.balance` อัปเดตใน transaction เดียวกัน และมี DB CHECK กันยอดลูกค้าติดลบ
-- **Concurrency**: lock บัญชีผู้โอนก่อนเช็ควงเงินรายวัน และ lock บัญชีตามลำดับ id กัน deadlock
-- **Idempotency**: `transactions (initiated_by, idempotency_key)` unique ทั้งแอปจะสร้าง key 1 ครั้งต่อการกด Review
-- **Payout**: ตัดเงินก่อน (pending) แล้วค่อยเรียก rail ถ้าล้มเหลวจะลง reversal entry คืนเงิน
-- **Auth**: Login = เบอร์ + PIN, เครื่องใหม่ต้อง OTP (device binding) · access JWT 15 นาที (อยู่ใน memory) · refresh token หมุนทุกครั้ง เก็บแบบ hash · reuse = revoke ทั้ง family · PIN bcrypt, ผิด 5 ครั้งล็อก 15 นาที, ห้าม PIN เรียง/ซ้ำ
-- **Mobile**: refresh token อยู่ใน Keychain/Keystore (`WHEN_UNLOCKED_THIS_DEVICE_ONLY`) · ล็อกแอปเมื่ออยู่ background > 60 วินาที · การโอนต้องใช้ PIN เสมอ (biometric ใช้แค่ปลดล็อก)
-- **KYC images** ส่งต่อให้ vendor ไม่เก็บไว้ใน DB ของเรา (เก็บแค่ provider_ref)
+ดู [docs/RUNBOOK.md](docs/RUNBOOK.md): deploy, onboard โรงงาน, ตั้งค่า LINE LIFF, backup/restore, rollback, incident
 
-## Go-live checklist
+### ต้องมีก่อนใช้จริง
+- [ ] คำตอบเป็นลายลักษณ์อักษรจาก ธปท. (02-356-7799) ว่าระบบใช้ในโรงอาหารบริษัทเดียวต้องขออนุญาตหรือไม่ — โดยเฉพาะโหมด prepaid
+- [ ] บัญชี ThaiBulkSMS + sender name ที่อนุมัติแล้ว (ทดสอบ field กับ trial key ก่อน)
+- [ ] LINE Login channel + LIFF ID
+- [ ] Domain, VM, Jenkins credentials
+- [ ] ทนายตรวจ [privacy notice](docs/legal/privacy-notice.md), [terms](docs/legal/terms-of-use.md), DPA และหนังสือยินยอมหักค่าจ้าง
+- [ ] Pentest ภายนอก + ทดสอบ restore backup
+- [ ] โลโก้/ชื่อสินค้าจริง (ตอนนี้หน้าเว็บใช้โลโก้จาก starter)
+- [ ] App icon/splash และ EAS build สำหรับแอป (ถ้าจะออกแอปด้วย ไม่ใช่แค่ LINE)
 
-สิ่งที่ **ต้อง** ทำก่อนใช้เงินจริง (ระบบจะไม่ยอม start ถ้า `SANDBOX=false` จนกว่าจะต่อ provider จริง):
-
-- [ ] **License/partner**: ใบอนุญาต e-Money (พ.ร.บ.ระบบการชำระเงิน 2560) หรือ white-label กับธนาคาร
-- [ ] **Providers** (`apps/api/src/providers`): SMS gateway, e-KYC/NDID vendor (ผ่านเกณฑ์ ธปท./IAL), bank/PromptPay payout + name inquiry, top-up (direct debit / card acquirer + webhook)
-- [ ] **Compliance**: AML/CFT screening (ปปง.), วงเงินตามระดับ KYC, PDPA (consent, retention, DPO), ข้อกำหนดและนโยบายความเป็นส่วนตัวฉบับจริง
-- [ ] **Security**: pentest, secrets ใน vault, TLS + cert pinning ในแอป, root/jailbreak detection, rate limit ที่ gateway, WAF, audit log ส่งไป SIEM
-- [ ] **Ops**: reconciliation รายวันกับธนาคาร, back-office (KYC review, refund, freeze account), monitoring/alert, backup + PITR, runbook incident
-- [ ] **Mobile**: app icon/splash จริง, EAS Build + store listing, push notification (KYC ผล/เงินเข้า)
-
-## Not built yet
-สแกน QR/PromptPay QR, จ่ายบิล, Statement PDF, การแจ้งเตือน, งบประมาณรายเดือน, back-office web
+## หมายเหตุ
+- Routes ของ wallet แบบโอนเงิน P2P/ธนาคาร (MVP แรก) ยังอยู่ใน API แต่ปิดไว้ (`CONSUMER_WALLET=false`)
+- ยังไม่มี: แจ้งเตือนผ่าน LINE OA เมื่อจ่าย/เติมสวัสดิการ, คืนเงินจากร้าน (refund) ผ่านหน้าจอ, export รายงาน Excel แยกร้าน

@@ -55,9 +55,10 @@ beforeAll(async () => {
     JWT_SECRET: "test-secret-test-secret-test-secret-123",
     OTP_PEPPER: "pepper-pepper-123",
     DAILY_LIMIT: "1000000",
+    CONSUMER_WALLET: "true",
   } as NodeJS.ProcessEnv);
   const providers = createSandboxProviders({ kycAutoApprove: false });
-  sms = providers.sms;
+  sms = providers.sms as SandboxSms;
   app = await buildApp({ cfg, db, providers });
 });
 

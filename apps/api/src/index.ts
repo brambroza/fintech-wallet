@@ -3,15 +3,20 @@ import { loadConfig } from "./config.js";
 import { createPool } from "./db.js";
 import { migrate } from "./migrate.js";
 import { createSandboxProviders } from "./providers/index.js";
+import { ThaiBulkSms } from "./providers/thaibulksms.js";
 
 const cfg = loadConfig();
-if (!cfg.SANDBOX) {
-  // Production adapters (licensed SMS gateway, e-KYC vendor, partner-bank payout) must be wired here.
-  throw new Error("SANDBOX=false requires real provider adapters in src/providers — not implemented yet");
-}
 const db = createPool(cfg.DATABASE_URL);
 await migrate(cfg.DATABASE_URL);
-const app = await buildApp({ cfg, db, providers: createSandboxProviders({ kycAutoApprove: cfg.KYC_AUTO_APPROVE, lineChannelId: cfg.LINE_CHANNEL_ID }) });
+const providers = createSandboxProviders({ kycAutoApprove: cfg.KYC_AUTO_APPROVE, lineChannelId: cfg.LINE_CHANNEL_ID });
+if (cfg.SMS_PROVIDER === "thaibulksms") {
+  providers.sms = new ThaiBulkSms(cfg.THAIBULKSMS_API_KEY!, cfg.THAIBULKSMS_API_SECRET!, cfg.THAIBULKSMS_SENDER!);
+}
+if (cfg.CONSUMER_WALLET && !cfg.SANDBOX) {
+  // KYC vendor and bank payout adapters are sandbox-only; never run the consumer wallet with real money.
+  throw new Error("CONSUMER_WALLET needs real KYC/payout adapters before SANDBOX=false");
+}
+const app = await buildApp({ cfg, db, providers });
 
 const close = async () => {
   await app.close();

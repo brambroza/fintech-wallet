@@ -48,14 +48,16 @@ export async function buildApp(ctx: AppCtx) {
   });
 
   await app.register(async (s) => authRoutes(s, ctx), { prefix: "/v1" });
-  await app.register(async (s) => kycRoutes(s, ctx), { prefix: "/v1" });
-  await app.register(async (s) => walletRoutes(s, ctx), { prefix: "/v1" });
+  if (ctx.cfg.CONSUMER_WALLET) {
+    await app.register(async (s) => kycRoutes(s, ctx), { prefix: "/v1" });
+    await app.register(async (s) => walletRoutes(s, ctx), { prefix: "/v1" });
+  }
   await app.register(async (s) => activationRoutes(s, ctx), { prefix: "/v1" });
   await app.register(async (s) => canteenEmployeeRoutes(s, ctx), { prefix: "/v1" });
   await app.register(async (s) => canteenShopRoutes(s, ctx), { prefix: "/v1" });
   await app.register(async (s) => canteenHrRoutes(s, ctx), { prefix: "/v1" });
   if (ctx.cfg.ADMIN_TOKEN) await app.register(async (s) => adminRoutes(s, ctx), { prefix: "/v1" });
-  if (ctx.cfg.SANDBOX) await app.register(async (s) => sandboxRoutes(s, ctx), { prefix: "/v1" });
+  if (ctx.cfg.SANDBOX && ctx.cfg.CONSUMER_WALLET) await app.register(async (s) => sandboxRoutes(s, ctx), { prefix: "/v1" });
 
   return app;
 }

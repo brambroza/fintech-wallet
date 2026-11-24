@@ -74,7 +74,7 @@ export class SandboxPayout implements PayoutProvider {
   }
 }
 
-export function createSandboxProviders(opts: { kycAutoApprove: boolean; lineChannelId?: string }): Providers & { sms: SandboxSms } {
+export function createSandboxProviders(opts: { kycAutoApprove: boolean; lineChannelId?: string }): Providers {
   return {
     sms: new SandboxSms(),
     kyc: new SandboxKyc(opts.kycAutoApprove),

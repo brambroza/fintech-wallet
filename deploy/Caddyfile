@@ -1,0 +1,18 @@
+# Automatic HTTPS (Let's Encrypt). DNS A records for both domains must point at this VM.
+{$API_DOMAIN} {
+	encode gzip
+	reverse_proxy api:4000
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+}
+
+{$APP_DOMAIN} {
+	encode gzip
+	reverse_proxy web:80
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+}

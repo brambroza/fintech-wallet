@@ -10,8 +10,9 @@ import { audit, authenticate, checkPin, consumeOtp, createOtp, issueTokens, rota
 export default async function authRoutes(app: FastifyInstance, ctx: AppCtx) {
   const strict = { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } };
 
-  /** Step 1 of register: send OTP to a phone that is not registered yet. */
+  /** Step 1 of register: send OTP to a phone that is not registered yet. (Consumer wallet only.) */
   app.post("/auth/register/otp", strict, async (req) => {
+    if (!ctx.cfg.CONSUMER_WALLET) throw err.notFound("NOT_FOUND", "Not found");
     const b = parse(z.object({ phone, deviceId }), req.body);
     const exists = await ctx.db.query("SELECT 1 FROM users WHERE phone = $1", [b.phone]);
     if (exists.rowCount) throw err.conflict("PHONE_TAKEN", "This number is already registered");
@@ -20,6 +21,7 @@ export default async function authRoutes(app: FastifyInstance, ctx: AppCtx) {
 
   /** Step 2: verify OTP + set PIN in one call; creates user, wallet and trusted device. */
   app.post("/auth/register", strict, async (req) => {
+    if (!ctx.cfg.CONSUMER_WALLET) throw err.notFound("NOT_FOUND", "Not found");
     const b = parse(
       z.object({ otpId: z.string().uuid(), code: z.string().regex(/^\d{6}$/), pin, deviceId, displayName: z.string().trim().min(1).max(60) }),
       req.body,

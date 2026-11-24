@@ -24,6 +24,13 @@ const schema = z.object({
   LINE_CHANNEL_ID: z.string().optional(),
   /** Charge QR lifetime. */
   CHARGE_TTL_SEC: z.coerce.number().int().positive().default(180),
+  /** Consumer P2P wallet routes from the first MVP (self-register, KYC, bank payout). Off for the canteen product. */
+  CONSUMER_WALLET: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+  /** console = log OTPs (sandbox only); thaibulksms = real SMS. */
+  SMS_PROVIDER: z.enum(["console", "thaibulksms"]).default("console"),
+  THAIBULKSMS_API_KEY: z.string().optional(),
+  THAIBULKSMS_API_SECRET: z.string().optional(),
+  THAIBULKSMS_SENDER: z.string().optional(),
 });
 
 export type Config = z.infer<typeof schema>;
@@ -32,6 +39,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const cfg = schema.parse(env);
   if (cfg.NODE_ENV === "production" && cfg.SANDBOX_EXPOSE_OTP) {
     throw new Error("SANDBOX_EXPOSE_OTP must be false in production");
+  }
+  if (!cfg.SANDBOX && cfg.SMS_PROVIDER === "console") {
+    throw new Error("SANDBOX=false needs a real SMS_PROVIDER (OTPs would never reach users)");
+  }
+  if (cfg.SMS_PROVIDER === "thaibulksms" && !(cfg.THAIBULKSMS_API_KEY && cfg.THAIBULKSMS_API_SECRET && cfg.THAIBULKSMS_SENDER)) {
+    throw new Error("SMS_PROVIDER=thaibulksms needs THAIBULKSMS_API_KEY, THAIBULKSMS_API_SECRET and THAIBULKSMS_SENDER");
   }
   return cfg;
 }

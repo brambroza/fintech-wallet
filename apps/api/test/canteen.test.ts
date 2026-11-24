@@ -54,7 +54,7 @@ beforeAll(async () => {
     ADMIN_TOKEN: ADMIN,
   } as NodeJS.ProcessEnv);
   const providers = createSandboxProviders({ kycAutoApprove: false });
-  sms = providers.sms;
+  sms = providers.sms as SandboxSms;
   app = await buildApp({ cfg, db, providers });
 });
 
@@ -64,6 +64,11 @@ afterAll(async () => {
 });
 
 describe("canteen onboarding", () => {
+  it("does not expose consumer self-registration or wallet routes", async () => {
+    expect((await req("POST", "/auth/register/otp", { phone: "0899999999", deviceId: "dev-xxxxxxxx" })).status).toBe(404);
+    expect((await req("POST", "/wallet/topup", { amount: 100, idempotencyKey: "xxxxxxxxxx" })).status).toBe(404);
+  });
+
   it("admin creates an org with its first HR", async () => {
     const denied = await req("POST", "/admin/orgs", { name: "X", code: "XX", hr: { name: "a", phone: "0811111111" } });
     expect(denied.status).toBe(401);
