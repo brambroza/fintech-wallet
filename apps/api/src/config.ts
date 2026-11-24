@@ -18,6 +18,12 @@ const schema = z.object({
   DAILY_LIMIT: z.coerce.number().int().positive().default(5_000_000),
   /** Fee for transfers out to bank/PromptPay in satang. */
   PAYOUT_FEE: z.coerce.number().int().min(0).default(0),
+  /** GO Along operator token for /v1/admin (create orgs). Unset = admin routes disabled. */
+  ADMIN_TOKEN: z.string().min(24).optional(),
+  /** LINE Login channel id; required to verify LIFF id tokens outside the sandbox. */
+  LINE_CHANNEL_ID: z.string().optional(),
+  /** Charge QR lifetime. */
+  CHARGE_TTL_SEC: z.coerce.number().int().positive().default(180),
 });
 
 export type Config = z.infer<typeof schema>;

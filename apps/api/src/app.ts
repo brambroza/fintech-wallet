@@ -8,6 +8,11 @@ import authRoutes from "./routes/auth.js";
 import kycRoutes from "./routes/kyc.js";
 import walletRoutes from "./routes/wallet.js";
 import sandboxRoutes from "./routes/sandbox.js";
+import activationRoutes from "./routes/activation.js";
+import canteenEmployeeRoutes from "./routes/canteen-employee.js";
+import canteenShopRoutes from "./routes/canteen-shop.js";
+import canteenHrRoutes from "./routes/canteen-hr.js";
+import adminRoutes from "./routes/admin.js";
 
 export async function buildApp(ctx: AppCtx) {
   const app = Fastify({
@@ -45,6 +50,11 @@ export async function buildApp(ctx: AppCtx) {
   await app.register(async (s) => authRoutes(s, ctx), { prefix: "/v1" });
   await app.register(async (s) => kycRoutes(s, ctx), { prefix: "/v1" });
   await app.register(async (s) => walletRoutes(s, ctx), { prefix: "/v1" });
+  await app.register(async (s) => activationRoutes(s, ctx), { prefix: "/v1" });
+  await app.register(async (s) => canteenEmployeeRoutes(s, ctx), { prefix: "/v1" });
+  await app.register(async (s) => canteenShopRoutes(s, ctx), { prefix: "/v1" });
+  await app.register(async (s) => canteenHrRoutes(s, ctx), { prefix: "/v1" });
+  if (ctx.cfg.ADMIN_TOKEN) await app.register(async (s) => adminRoutes(s, ctx), { prefix: "/v1" });
   if (ctx.cfg.SANDBOX) await app.register(async (s) => sandboxRoutes(s, ctx), { prefix: "/v1" });
 
   return app;

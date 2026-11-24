@@ -11,7 +11,7 @@ if (!cfg.SANDBOX) {
 }
 const db = createPool(cfg.DATABASE_URL);
 await migrate(cfg.DATABASE_URL);
-const app = await buildApp({ cfg, db, providers: createSandboxProviders({ kycAutoApprove: cfg.KYC_AUTO_APPROVE }) });
+const app = await buildApp({ cfg, db, providers: createSandboxProviders({ kycAutoApprove: cfg.KYC_AUTO_APPROVE, lineChannelId: cfg.LINE_CHANNEL_ID }) });
 
 const close = async () => {
   await app.close();

@@ -20,7 +20,7 @@ export async function audit(db: Db | Tx, userId: string | null, action: string, 
 export async function createOtp(
   ctx: AppCtx,
   phone: string,
-  purpose: "register" | "login",
+  purpose: "register" | "login" | "activate",
   deviceId: string,
 ): Promise<{ otpId: string; expiresAt: Date; code?: string }> {
   const last = await ctx.db.query(
@@ -49,7 +49,7 @@ export async function consumeOtp(
   ctx: AppCtx,
   otpId: string,
   code: string,
-  expect: { purpose: "register" | "login"; deviceId: string; phone?: string },
+  expect: { purpose: "register" | "login" | "activate"; deviceId: string; phone?: string },
 ): Promise<{ phone: string }> {
   const r = await ctx.db.query("SELECT * FROM otp_challenges WHERE id = $1", [otpId]);
   const c = r.rows[0];
@@ -76,6 +76,7 @@ export async function checkPin(ctx: AppCtx, userId: string, pin: string): Promis
   const r = await ctx.db.query("SELECT pin_hash, pin_failed, pin_locked_until FROM users WHERE id = $1", [userId]);
   const u = r.rows[0];
   if (!u) throw err.unauthorized();
+  if (!u.pin_hash) throw err.forbidden("NOT_ACTIVATED", "Account not activated yet");
   if (u.pin_locked_until && new Date(u.pin_locked_until) > new Date()) {
     throw err.locked("PIN locked, try again later", { until: u.pin_locked_until });
   }
