@@ -1,0 +1,39 @@
+import { router } from "expo-router";
+import type { Txn } from "@/lib/api";
+import { baht, time } from "@/lib/format";
+import { color, font } from "@/theme";
+import { T, IconBox, ListRow } from "./ui";
+import type { IconName } from "./Icon";
+
+const typeLabel: Record<Txn["type"], string> = {
+  p2p: "โอนเงิน",
+  topup: "เติมเงิน",
+  payout: "โอนออกธนาคาร",
+  goal_deposit: "เป้าออม",
+  reversal: "คืนเงิน",
+};
+
+export function TxRow({ t, dateFn = time }: { t: Txn; dateFn?: (iso: string) => string }) {
+  const incoming = t.delta > 0;
+  const failed = t.status === "failed";
+  const icon: IconName = t.type === "goal_deposit" ? "target" : incoming ? "in" : "out";
+  const name = t.counterparty?.name ?? typeLabel[t.type];
+  const statusText = failed ? " · ไม่สำเร็จ" : t.status === "pending" ? " · กำลังดำเนินการ" : "";
+  return (
+    <ListRow
+      left={<IconBox name={icon} fg={incoming ? color.ok : color.muted} bg={incoming ? color.okSoft : color.neutralSoft} />}
+      title={name}
+      sub={`${typeLabel[t.type]} · ${dateFn(t.createdAt)}${statusText}`}
+      right={
+        <T
+          v="bodyStrong"
+          style={{ color: failed ? color.faint : incoming ? color.ok : color.ink, textDecorationLine: failed ? "line-through" : "none", fontFamily: font.semibold }}
+        >
+          {baht(t.delta, { sign: true })}
+        </T>
+      }
+      onPress={() => router.push({ pathname: "/tx/[id]", params: { id: t.id, data: JSON.stringify(t) } })}
+      chevron={false}
+    />
+  );
+}

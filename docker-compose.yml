@@ -1,0 +1,33 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: wallet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wallet-dev-only}
+      POSTGRES_DB: wallet
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wallet"]
+      interval: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:5432:5432"
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    env_file: apps/api/.env
+    environment:
+      DATABASE_URL: postgres://wallet:${POSTGRES_PASSWORD:-wallet-dev-only}@db:5432/wallet
+      NODE_ENV: production
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "4000:4000"
+    restart: unless-stopped
+
+volumes:
+  pgdata:

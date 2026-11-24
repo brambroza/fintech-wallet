@@ -1,0 +1,56 @@
+{
+  "expo": {
+    "name": "Wallet",
+    "slug": "fintech-wallet",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#E6F4FE",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      },
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "scheme": "fintechwallet",
+    "plugins": [
+      "expo-router",
+      [
+        "expo-secure-store",
+        {
+          "faceIDPermission": "ใช้ Face ID เพื่อปลดล็อกแอปและยืนยันการโอน"
+        }
+      ],
+      [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "ใช้ Face ID เพื่อปลดล็อกแอปและยืนยันการโอน"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "cameraPermission": "ใช้กล้องเพื่อถ่ายรูปบัตรประชาชนและใบหน้าสำหรับยืนยันตัวตน",
+          "photosPermission": false
+        }
+      ],
+      "expo-font"
+    ],
+    "experiments": {
+      "typedRoutes": false
+    },
+    "extra": {
+      "apiUrl": "http://localhost:4000",
+      "supportPhone": "0856083298"
+    }
+  }
+}
