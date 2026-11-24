@@ -143,6 +143,18 @@ export default async function canteenHrRoutes(app: FastifyInstance, ctx: AppCtx)
     return { qr: `CWB1:${r.rows[0].badge_token}` };
   });
 
+  /** All active employees' badge QR payloads, for printing a sheet. */
+  app.get("/org/badges", async (req) => {
+    const m = await requireRole(ctx, req, "hr");
+    const r = await ctx.db.query(
+      `SELECT m.id, m.employee_code, m.department, u.display_name, m.badge_token FROM org_members m JOIN users u ON u.id = m.user_id
+       WHERE m.org_id = $1 AND m.role = 'employee' AND m.status = 'active' ORDER BY m.employee_code`,
+      [m.orgId],
+    );
+    await audit(ctx.db, req.user!.id, "org.badges_exported", req.ip, { count: r.rowCount });
+    return r.rows.map((x) => ({ id: x.id, code: x.employee_code, name: x.display_name, department: x.department, qr: `CWB1:${x.badge_token}` }));
+  });
+
   /** For badge-only employees: the employee types their own PIN at the HR desk. */
   app.post("/org/employees/:id/pin", async (req) => {
     const m = await requireRole(ctx, req, "hr");
